@@ -8,7 +8,7 @@ MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 - **Interactive HTML cards** — sandboxed iframe rendering with per-card CSP
 - **postMessage bridge** — `ui/initialize`, `tools/call`, `resources/read`, `ui/update-model-context`, `ui/message`
 - **Session ID injection** — automatically injects `session_id` into card-initiated `tools/call`
-- **Context staging** — `ui/update-model-context` context staged and prepended to next `ui/message`
+- **Invisible context injection** — `ui/update-model-context` context injected as a plugin-sourced message via `agent.inject()`, classified as a collapsed context row (not a visible user message bubble)
 - **HTTP bridge endpoint** — `/mcp-apps/<serverName>/bridge` for secure iframe-to-MCP-server proxying
 - **stdio + streamable-http** — supports both MCP transport types
 
@@ -112,8 +112,26 @@ dsh --profile web --patch ./examples/mcp-apps-utp.patch.yml --port 8089
 | P2 | `session_id` injection fails | `readSessionId()` prefers `meta.lastToolResult.structuredContent` |
 | P3 | External images blocked by CSP | `buildCsp()` adds `https:` to default `img-src` |
 | P4 | `ui/update-model-context` was TODO | `_stagedContext` Map stores and prepends context |
+| P5 | Context visible as user message text | `ui/inject-context` bridge injects via `agent.inject()` as plugin-sourced message |
 
 See [FINDINGS.md](./FINDINGS.md) for detailed root cause analysis.
+
+## For UTP Skill Authors
+
+If your UTP skill produces interactive HTML cards (via `_meta.ui` in tool results), you **must** load this plugin in DSH — otherwise DSH will call the MCP tools but render only plain text results, with no iframe/card UI.
+
+Quick start:
+
+```bash
+# 1. Install the plugin in your DSH profile
+dsh plugin add oriliz/dsh-mcp-apps-host
+
+# 2. Configure the MCP server connection (see Usage above)
+# 3. Start DSH with your skill and the patch
+dsh --profile web --patch ./your-cordis.patch.yml
+```
+
+Without this plugin, card-initiated interactions (`tools/call`, `ui/message`, `ui/update-model-context`) have no bridge to reach the MCP server from the iframe.
 
 ## License
 
