@@ -1,0 +1,14 @@
+# MCP Apps Host plugin patch: connects DSH to the UTP MCP server
+# via stdio, registering its tools with full _meta preservation
+# so interactive HTML cards survive the tool pipeline.
+- insert:
+    - id: mcp-apps-host-utp
+      name: '@deepseek-ai/dsh-mcp-apps-host'
+      config:
+        transport: stdio
+        serverName: utp
+        command: utp
+        args: ['mcp', 'serve']
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 60000
