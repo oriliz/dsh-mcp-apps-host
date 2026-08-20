@@ -13,7 +13,7 @@
  * @module @deepseek-ai/dsh-mcp-apps-host
  */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -22,7 +22,6 @@ import { z } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import zz from '@deepseek-ai/schemastery'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution, JsonSchemaNode, JsonValue } from '@deepseek-ai/dsh-tools'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -466,10 +465,15 @@ function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Cont
           replyError(-32601, `agent not found for session: ${sessionId}`)
           return
         }
-        const message = createUserMessage({
-          content: [{ type: 'text', text: context }],
-          source: { kind: 'plugin', plugin: 'mcp-apps-host' },
-        })
+        // ponytail: inline UserMessage construction instead of importing createUserMessage
+        // from @deepseek-ai/dsh-llm — avoids adding a profile dependency the profile doesn't install.
+        // The inbox only checks message.id for duplicates; the full UserMessage shape is not validated at runtime.
+        const message = {
+          id: randomUUID(),
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: context }],
+          source: { kind: 'plugin' as const, plugin: 'mcp-apps-host' },
+        } as never
         agent.inject(message)
         reply({})
         return
