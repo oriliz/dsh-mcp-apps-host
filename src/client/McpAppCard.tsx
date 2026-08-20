@@ -218,15 +218,33 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
           }
           _lastMessageTime.set(callId, now)
 
-          // Prepend staged context (from ui/update-model-context) if any
+          // Inject staged context (from ui/update-model-context) invisibly via
+          // the bridge before sending the visible user message. The context is
+          // plugin-sourced (source: { kind: 'plugin' }) so the UI classifies it
+          // as a collapsed context row, not a visible user message bubble.
           const staged = _stagedContext.get(callId)
-          const fullText = staged ? `${staged}\n\n${text}` : text
           _stagedContext.delete(callId)
 
-          // Send the user message
+          if (staged) {
+            try {
+              await fetch(`/mcp-apps/${_serverName}/bridge`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  method: 'ui/inject-context',
+                  params: { sessionId, context: staged },
+                }),
+              })
+            } catch (error) {
+              console.error('[mcp-apps-host] context injection failed:', error)
+            }
+          }
+
+          // Send the visible user message (text only, no context prepended)
           if (_sendUserMessage !== undefined) {
             try {
-              await _sendUserMessage(sessionId, fullText)
+              await _sendUserMessage(sessionId, text)
             } catch (error) {
               console.error('[mcp-apps-host] ui/message failed:', error)
             }

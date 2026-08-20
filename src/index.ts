@@ -22,10 +22,12 @@ import { z } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import zz from '@deepseek-ai/schemastery'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution, JsonSchemaNode, JsonValue } from '@deepseek-ai/dsh-tools'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-agent'
 import type { ServerResponse, IncomingMessage } from 'node:http'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 
@@ -90,8 +92,8 @@ export const Config = zz.union([
 /** Cordis plugin name. */
 export const name = 'mcp-apps-host'
 
-/** Services required: tool registry + HTTP server for the iframe bridge. */
-export const inject = ['tools', 'webServer']
+/** Services required: tool registry + HTTP server + agent registry for context injection. */
+export const inject = ['tools', 'webServer', 'agents']
 
 /** Raw result schema: accept any shape the server returns (no pre-validation). */
 const RawResultSchema = z.record(z.string(), z.unknown())
@@ -358,7 +360,7 @@ interface AppsConnection {
  * - `tools/call`: the tool name must be in the `registeredToolNames` whitelist
  * - `resources/read`: the URI must start with `ui://`
  */
-function createBridgeHandler(connections: Map<string, AppsConnection>) {
+function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Context) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     // Only accept POST
     if (req.method !== 'POST') {
@@ -448,6 +450,31 @@ function createBridgeHandler(connections: Map<string, AppsConnection>) {
         return
       }
 
+      // ui/inject-context: inject a plugin-sourced (invisible) context message
+      // into the agent's next-step inbox. The context is claimed before the next
+      // user message in the same step, so the model sees it as a prefix.
+      if (method === 'ui/inject-context') {
+        const p = params ?? {}
+        const sessionId = p.sessionId
+        const context = p.context
+        if (typeof sessionId !== 'string' || typeof context !== 'string') {
+          replyError(-32602, 'missing sessionId or context')
+          return
+        }
+        const agent = ctx.agents.get(sessionId as never)
+        if (agent === undefined) {
+          replyError(-32601, `agent not found for session: ${sessionId}`)
+          return
+        }
+        const message = createUserMessage({
+          content: [{ type: 'text', text: context }],
+          source: { kind: 'plugin', plugin: 'mcp-apps-host' },
+        })
+        agent.inject(message)
+        reply({})
+        return
+      }
+
       replyError(-32601, `method not supported: ${method ?? '(none)'}`)
     } catch (error: unknown) {
       replyError(-32603, `internal error: ${error instanceof Error ? error.message : String(error)}`)
@@ -481,7 +508,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const dispose = ctx.webServer.register({
       kind: 'prefix',
       path: '/mcp-apps',
-      handler: createBridgeHandler(connections),
+      handler: createBridgeHandler(connections, ctx),
     })
     return () => {
       dispose()
