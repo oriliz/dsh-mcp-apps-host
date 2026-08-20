@@ -1,0 +1,14 @@
+# MCP Apps Host bundle: connect to an MCP Apps server and render
+# interactive HTML cards from _meta.ui payloads in sandboxed iframes.
+# Override transport/serverName/command via your own --patch file.
+- insert:
+    - id: mcp-apps-host
+      name: '@deepseek-ai/dsh-mcp-apps-host'
+      config:
+        transport: stdio
+        serverName: utp
+        command: utp
+        args: ['mcp', 'serve']
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 60000
