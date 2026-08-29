@@ -16,7 +16,6 @@ import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
  */
 export declare function configureMcpAppCard(opts: {
     sendUserMessage: (sessionId: string, text: string) => Promise<void>;
-    serverName: string;
 }): void;
 /**
  * Renders one MCP Apps interactive HTML card. The card is a sandboxed iframe
@@ -30,5 +29,5 @@ export declare function configureMcpAppCard(opts: {
  * - `ui/update-model-context` — staged as context for the next user message
  * - `ui/message` — sends a user message into the DSH conversation (debounced)
  */
-export declare function McpAppCard(props: ToolCallViewProps): JSX.Element | null;
+export declare function McpAppCard(props: ToolCallViewProps): JSX.Element;
 //# sourceMappingURL=McpAppCard.d.ts.map

@@ -18,8 +18,6 @@ import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 
 /** Sends a user message into the DSH conversation. */
 let _sendUserMessage: ((sessionId: string, text: string) => Promise<void>) | undefined
-/** Fallback bridge server name — used only when a result's meta lacks `mcpServerName`. */
-let _serverName = 'utp'
 
 /**
  * Configure the module-level API used by McpAppCard instances.
@@ -27,10 +25,8 @@ let _serverName = 'utp'
  */
 export function configureMcpAppCard(opts: {
   sendUserMessage: (sessionId: string, text: string) => Promise<void>
-  serverName: string
 }): void {
   _sendUserMessage = opts.sendUserMessage
-  _serverName = opts.serverName
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -68,15 +64,16 @@ function readMcpApp(block: ToolCallBlock): McpAppPayload | null {
 
 /**
  * Which MCP server's bridge endpoint this card talks to. `presentationMeta`
- * projects the owning server's name beside the payload; fall back to the
- * configured default for results projected by older hosts.
+ * projects the owning server's name beside the payload, so a card result
+ * always carries it; '' is the defensive arm for results the plugin never
+ * projected (the bridge cannot be routed then).
  */
 function readMcpServerName(block: ToolCallBlock): string {
   if (isToolResult(block)) {
     const meta = block.meta as { mcpServerName?: unknown } | undefined | null
     if (meta && typeof meta.mcpServerName === 'string' && meta.mcpServerName !== '') return meta.mcpServerName
   }
-  return _serverName
+  return ''
 }
 
 /** Build a Content-Security-Policy string from the MCP Apps CSP directives. */
@@ -141,6 +138,45 @@ function extractTextContent(params: unknown): string {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
+/** First text line of a settled result, truncated for the plain row. */
+function firstTextLine(content: ToolResultNode['content']): string {
+  for (const part of content) {
+    if (part.type === 'text' && typeof part.text === 'string' && part.text !== '') {
+      const line = part.text.split('\n', 1)[0] ?? part.text
+      return line.length > 120 ? `${line.slice(0, 117)}…` : line
+    }
+  }
+  return ''
+}
+
+/**
+ * Plain row for a tool registered in the card slot whose result carries no
+ * MCP Apps payload (mixed-return tools, or the call still running). The keyed
+ * slot does not fall back once an entry claims the key, so the component owns
+ * its own non-card rendering.
+ */
+function PlainToolRow({ toolName, block }: { toolName: string; block: ToolCallBlock }): JSX.Element {
+  const settled = isToolResult(block)
+  const summary = settled ? firstTextLine(block.content) : ''
+  return (
+    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '6px 2px', fontSize: '13px' }}>
+      <span
+        style={{
+          flexShrink: 0,
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          background: settled ? '#9aa0a6' : '#4a90d9',
+        }}
+      />
+      <span style={{ flexShrink: 0, fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>{toolName}</span>
+      <span style={{ color: '#8a8a8a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {settled ? (summary === '' ? 'done' : summary) : 'running…'}
+      </span>
+    </div>
+  )
+}
+
 /**
  * Renders one MCP Apps interactive HTML card. The card is a sandboxed iframe
  * whose `srcDoc` is the HTML from `_meta.ui.resource.text`. The iframe
@@ -153,8 +189,8 @@ function extractTextContent(params: unknown): string {
  * - `ui/update-model-context` — staged as context for the next user message
  * - `ui/message` — sends a user message into the DSH conversation (debounced)
  */
-export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
-  const { block, callId, sessionId } = props
+export function McpAppCard(props: ToolCallViewProps): JSX.Element {
+  const { block, callId, sessionId, toolName } = props
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   // Keep the latest block in a ref so the postMessage handler always sees it.
   const blockRef = useRef(block)
@@ -173,8 +209,6 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
 
     const { id, method, params } = msg as { jsonrpc: string; id?: string | number; method?: string; params?: unknown }
     const hasId = id !== undefined
-    // The bridge endpoint of the server that owns this card's tool result.
-    const bridgeUrl = `/mcp-apps/${readMcpServerName(blockRef.current)}/bridge`
 
     const reply = (result: unknown): void => {
       iframeRef.current?.contentWindow?.postMessage(
@@ -188,6 +222,15 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
         '*',
       )
     }
+
+    // The bridge endpoint of the server that owns this card's tool result.
+    // Empty means the result lacks the projection — nothing can be routed.
+    const serverName = readMcpServerName(blockRef.current)
+    if (serverName === '') {
+      replyError(-32001, 'tool result lacks mcpServerName — bridge cannot be routed')
+      return
+    }
+    const bridgeUrl = `/mcp-apps/${serverName}/bridge`
 
     try {
       // ── ui/initialize ────────────────────────────────────────────────────
@@ -340,17 +383,20 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
     }
   }, [callId])
 
-  // Don't render if no MCP Apps payload (fall back to default tool row)
-  if (!mcpApp) return null
+  // No MCP Apps payload on this result: the tool either still runs or returns
+  // mixed card/plain results — render the plain row (the keyed slot has no
+  // per-render fallback once an entry claims the key).
+  if (!mcpApp) return <PlainToolRow toolName={toolName} block={block} />
 
   // Inline form: extract HTML from resource.text
   const html = mcpApp.resource?.text
   if (!html) {
-    // Referenced form (resourceUri) not yet implemented — log and fall back
+    // Referenced form (resourceUri) not yet implemented — log and render the
+    // plain row so the tool result stays visible.
     if (mcpApp.resourceUri) {
       console.debug('[mcp-apps-host] referenced form not yet implemented:', mcpApp.resourceUri)
     }
-    return null
+    return <PlainToolRow toolName={toolName} block={block} />
   }
 
   const csp = buildCsp(mcpApp.csp)

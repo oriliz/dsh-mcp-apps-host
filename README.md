@@ -62,60 +62,41 @@ pnpm --filter @deepseek-ai/dsh-mcp-apps-host bundle
 
 ## Usage
 
-### 1. Configure in DSH profile
+### 1. Configure the connection
 
-Add to your `cordis.patch.yml`:
+Declare one plugin instance per MCP Apps server in your overlay (`serverName` picks both the tool prefix `mcp__<serverName>__*` and the bridge path `/mcp-apps/<serverName>/bridge`). A ready-to-edit template ships in [`examples/connect-server.patch.yml`](examples/connect-server.patch.yml):
 
 ```yaml
 - insert:
-    - id: mcp-apps-host-utp
+    - id: mcp-apps-host-my-server
       name: '@deepseek-ai/dsh-mcp-apps-host'
       config:
         transport: stdio
-        serverName: utp
-        command: utp
-        args: ['mcp', 'serve']
+        serverName: my-server
+        command: my-apps-server
+        args: []
         env: {}
         cwd: ''
         toolCallTimeoutMs: 60000
 ```
 
+`transport: streamable-http` with a `url` field is also supported.
+
 ### 2. Start DSH
 
 ```bash
-dsh --profile web --patch ./examples/mcp-apps-utp.patch.yml
+dsh --profile web --patch ./examples/connect-server.patch.yml
 ```
 
 ### 3. Verify
 
-Ask the agent to search for a product. The MCP tool result renders as an interactive card inside the conversation — product list, images, prices, and all card interactions (add to cart, checkout) work within the iframe.
+Ask the agent to call one of your server's tools. The tool result renders as an interactive card inside the conversation instead of a plain result row — and the card's own buttons reach back to your server through the bridge (`tools/call`, `resources/read`, `ui/message`). No server at hand? Use the bundled [demo](#demo) first.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  DSH Agent Loop                                          │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  Tool Registry (ctx.tools)                        │  │
-│  │  mcp__utp__catalog_search  →  ToolDefinition      │  │
-│  │  mcp__utp__cart_add         →  ToolDefinition      │  │
-│  └──────────────┬──────────────────────────────────┘  │
-│                 │ execute() → MCP tools/call          │
-│                 │ presentationMeta() → meta.mcpApp     │
-│  ┌──────────────▼──────────────────────────────────┐  │
-│  │  MCP Client (stdio/HTTP)                        │  │
-│  │  capabilities: { extensions: { 'io.../ui': {} } } │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │  HTTP Bridge: /mcp-apps/utp/bridge              │  │
-│  │  tools/call (whitelist) · resources/read (ui://) │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │  Client Plugin (React)                          │  │
-│  │  McpAppCard → sandboxed iframe + postMessage    │  │
-│  └─────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
+![Architecture](architecture.svg)
+
+Tool results flow left to right (server → tool registry → conversation → card), and card interactions loop back through the HTTP bridge to the server. Card HTML never enters the model context, and the bridge only lets the iframe call tools registered on that server and read `ui://` resources.
 
 ## Files
 
@@ -125,6 +106,8 @@ Ask the agent to search for a product. The MCP tool result renders as an interac
 | `src/client/McpAppCard.tsx` | Card component: iframe, postMessage handling |
 | `src/client/index.ts` | Client plugin: slot registration, sendUserMessage |
 | `src/invariant.ts` | Cordis companion (no runtime invariant) |
+| `demo/` | Zero-dependency demo server + protocol self-test + overlay |
+| `examples/` | Connection overlay template |
 
 ## Development
 
@@ -134,7 +117,7 @@ npx tsc -b packages/mcp/mcp-apps-host/tsconfig.json
 pnpm --filter @deepseek-ai/dsh-mcp-apps-host bundle
 
 # Run DSH with the plugin
-dsh --profile web --patch ./examples/mcp-apps-utp.patch.yml --port 8089
+dsh --profile web --patch ./examples/connect-server.patch.yml --port 8089
 ```
 
 ## Pitfalls Fixed
@@ -142,30 +125,13 @@ dsh --profile web --patch ./examples/mcp-apps-utp.patch.yml --port 8089
 | # | Issue | Fix |
 |---|-------|-----|
 | P0 | Server strips `_meta.ui` | Declare `mimeTypes` in client capabilities |
-| P1 | Card shows empty form, no product data | `presentationMeta()` wraps result as `CallToolResult`-shaped object |
+| P1 | Card renders but shows no tool data | `presentationMeta()` wraps result as `CallToolResult`-shaped object |
 | P2 | `session_id` injection fails | `readSessionId()` prefers `meta.lastToolResult.structuredContent` |
 | P3 | External images blocked by CSP | `buildCsp()` adds `https:` to default `img-src` |
 | P4 | `ui/update-model-context` was TODO | `_stagedContext` Map stores and prepends context |
 | P5 | Context visible as user message text | `ui/inject-context` bridge injects via `agent.inject()` as plugin-sourced message |
 
 See [FINDINGS.md](./FINDINGS.md) for detailed root cause analysis.
-
-## For UTP Skill Authors
-
-If your UTP skill produces interactive HTML cards (via `_meta.ui` in tool results), you **must** load this plugin in DSH — otherwise DSH will call the MCP tools but render only plain text results, with no iframe/card UI.
-
-Quick start:
-
-```bash
-# 1. Install the plugin in your DSH profile
-dsh plugin add oriliz/dsh-mcp-apps-host
-
-# 2. Configure the MCP server connection (see Usage above)
-# 3. Start DSH with your skill and the patch
-dsh --profile web --patch ./your-cordis.patch.yml
-```
-
-Without this plugin, card-initiated interactions (`tools/call`, `ui/message`, `ui/update-model-context`) have no bridge to reach the MCP server from the iframe.
 
 ## License
 

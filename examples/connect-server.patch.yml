@@ -1,0 +1,17 @@
+# Connect this plugin to YOUR MCP Apps server.
+# Change serverName / command / args to match your server, then start:
+#   dsh --profile web --patch ./examples/connect-server.patch.yml
+#
+# serverName picks the bridge path (/mcp-apps/<serverName>/bridge) and the
+# tool prefix (mcp__<serverName>__*); one plugin instance per server.
+- insert:
+    - id: mcp-apps-host-my-server
+      name: '@deepseek-ai/dsh-mcp-apps-host'
+      config:
+        transport: stdio
+        serverName: my-server
+        command: my-apps-server
+        args: []
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 60000

@@ -1,77 +1,34 @@
 /**
- * MCP Apps Host client plugin: registers `tool.call.toolview` slots for the
- * known card-capable MCP server tool names, and configures the McpAppCard
- * component with a `sendUserMessage` callback that routes into the DSH
- * conversation service.
+ * MCP Apps Host client plugin: discovers card-capable tools at runtime by
+ * watching the current session's transcript, registers a `tool.call.toolview`
+ * slot for each tool whose settled result carries an MCP Apps payload, and
+ * configures the McpAppCard component with a `sendUserMessage` callback that
+ * routes into the DSH conversation service.
  *
  * @module @deepseek-ai/dsh-mcp-apps-host/client
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { McpAppCard, configureMcpAppCard } from './McpAppCard.tsx'
-
-// ── Constants ──────────────────────────────────────────────────────────────
-
-/**
- * Servers whose tool results render MCP Apps cards, with their raw tool names.
- * The slot keys are the public tool names (`mcp__<serverName>__<rawName>`).
- * The toolview slot is exact-key keyed, so a server not listed here renders
- * its tools through the generic tool row even when `_meta.ui` survives — add
- * its row here to enable the card view.
- */
-const CARD_SERVERS: readonly { serverName: string; rawToolNames: readonly string[] }[] = [
-  {
-    serverName: 'utp',
-    rawToolNames: [
-      'utp_discover',
-      'utp_login',
-      'utp_link',
-      'utp_device_authorization',
-      'utp_catalog_search',
-      'utp_catalog_product',
-      'utp_cart_list',
-      'utp_cart_add',
-      'utp_cart_update',
-      'utp_cart_remove',
-      'utp_checkout_create',
-      'utp_checkout_get',
-      'utp_checkout_poll',
-      'utp_checkout_complete',
-      'utp_checkout_cancel',
-      'utp_checkout_set_address',
-      'utp_checkout_set_discount',
-      'utp_address_form',
-      'utp_address_create',
-      'utp_address_children',
-      'utp_address_parse',
-      'utp_order_list',
-      'utp_profile_register',
-      'utp_profile_get',
-    ],
-  },
-  {
-    serverName: 'demo',
-    rawToolNames: ['demo_interactive', 'demo_referenced'],
-  },
-]
 
 // ── Client plugin ─────────────────────────────────────────────────────────
 
-/** Services required: slot registry + sessions (for conversation send) + locale. */
-export const inject = ['slots', 'sessions', 'locale']
+/** Services required: slot registry + sessions (transcript discovery + conversation send). */
+export const inject = ['slots', 'sessions']
 
 /**
- * Mount the MCP Apps card view: configure the module-level API and register
- * `tool.call.toolview` slots for every known UTP tool name.
+ * Mount the MCP Apps card view. No hardcoded server/tool list: the plugin
+ * follows the current session's transcript, and the first settled result whose
+ * meta carries an MCP Apps payload registers that tool name in the keyed
+ * `tool.call.toolview` slot. Store notifications are synchronous while React
+ * re-renders after, so even the first card call renders through McpAppCard
+ * instead of flashing the generic row; opening a history session works the
+ * same way (the restored blocks trigger the registration pass).
  */
 export function apply(ctx: ClientContext): void {
   // Configure the McpAppCard component with the conversation send callback.
-  // The server name is the bridge-routing fallback; each card's own
-  // meta.mcpServerName (projected by presentationMeta) wins when present.
   configureMcpAppCard({
-    serverName: CARD_SERVERS[0]?.serverName ?? 'utp',
     sendUserMessage: async (sessionId: string, text: string): Promise<void> => {
       // Duck-type the sessions service to avoid the SessionStore/ISessions
       // type conflict (server-side SessionStore vs client-side ISessions
@@ -97,17 +54,68 @@ export function apply(ctx: ClientContext): void {
     },
   })
 
-  // Register a tool.call.toolview slot for each known card-capable tool name.
-  // The slot renders the McpAppCard component, which checks block.meta.mcpApp
-  // and renders the iframe if present (or falls back to the default tool row).
-  ctx.slots.inject('tool.call.toolview', function* () {
-    for (const server of CARD_SERVERS) {
-      for (const rawName of server.rawToolNames) {
-        yield ctx.slots.register({
-          name: 'tool.call.toolview',
-          key: `mcp__${server.serverName}__${rawName}`,
-        }, McpAppCard)
+  // ── Runtime card-tool discovery ─────────────────────────────────────────
+  // Registered wire tool names (Set makes the scan idempotent; entries unload
+  // with the plugin fiber through the slot registry's effect cascade).
+  const registered = new Set<string>()
+
+  /** One transcript node: register its tool result when it carries a card payload. */
+  const visit = (node: unknown): void => {
+    if (typeof node !== 'object' || node === null) return
+    const n = node as {
+      kind?: unknown
+      call?: { name?: unknown } | null
+      meta?: unknown
+      subCalls?: readonly unknown[]
+      blocks?: readonly unknown[]
+    }
+    if (n.kind === 'tool-result') {
+      const name = typeof n.call?.name === 'string' ? n.call.name : ''
+      const meta = n.meta as { mcpApp?: unknown } | null | undefined
+      if (name !== '' && meta?.mcpApp != null && !registered.has(name)) {
+        registered.add(name)
+        ctx.slots.register({ name: 'tool.call.toolview', key: name }, McpAppCard)
       }
     }
-  })
+    for (const child of n.subCalls ?? []) visit(child)
+    for (const child of n.blocks ?? []) visit(child)
+  }
+
+  // Duck-typed read of the current session's snapshot (the typed face lives
+  // in the runtime package; this plugin only needs the transcript list).
+  type SessionSnapshotSource = {
+    getSnapshot(): { nodes: readonly unknown[] }
+    subscribe(fn: () => void): () => void
+  }
+  type SessionsFace = {
+    list: { getSnapshot(): { current?: unknown }; subscribe(fn: () => void): () => void }
+    binding(id: string): { session?: unknown } | undefined
+  }
+  const sessions = ctx.get('sessions') as unknown as SessionsFace | undefined
+
+  // Follow the current session: subscribe to its transcript, scan immediately
+  // (history restore), and re-scan on every store notification (live calls —
+  // the registration lands before the matching re-render).
+  let unsubscribeSession: (() => void) | undefined
+  const followCurrent = (): void => {
+    unsubscribeSession?.()
+    unsubscribeSession = undefined
+    const current = sessions?.list.getSnapshot().current
+    if (typeof current !== 'string') return
+    const session = sessions?.binding(current)?.session as SessionSnapshotSource | undefined
+    if (session === undefined) return
+    const scan = (): void => {
+      for (const node of session.getSnapshot().nodes) visit(node)
+    }
+    unsubscribeSession = session.subscribe(scan)
+    scan()
+  }
+
+  const unsubscribeList = sessions?.list.subscribe(followCurrent)
+  followCurrent()
+
+  ctx.effect(() => () => {
+    unsubscribeList?.()
+    unsubscribeSession?.()
+  }, 'mcp-apps-host: card tool discovery')
 }
