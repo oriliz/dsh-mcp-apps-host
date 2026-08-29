@@ -41,16 +41,23 @@ dsh web --patch dsh-mcp-apps-host/demo/mcp-apps-demo.cordis.yml
 
 ## Install
 
+Not on npm yet — install from GitHub. The DSH host provides all `@deepseek-ai/dsh-*` peer packages at runtime, so no peer install is needed:
+
 ```bash
-npm install @deepseek-ai/dsh-mcp-apps-host
+npm install github:oriliz/dsh-mcp-apps-host
 ```
 
-### From source (monorepo)
+### From source
+
+All dsh peer packages resolve inside the [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) pnpm workspace, so build there (this also matches the layout the bundled `lib/` was built in):
 
 ```bash
-cd packages/mcp/mcp-apps-host
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+cd deepseek-harness
+git clone https://github.com/oriliz/dsh-mcp-apps-host.git packages/mcp/mcp-apps-host
 pnpm install
-pnpm run bundle
+npx tsc -b packages/mcp/mcp-apps-host
+pnpm --filter @deepseek-ai/dsh-mcp-apps-host bundle
 ```
 
 ## Usage
