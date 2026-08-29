@@ -10,7 +10,34 @@ MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 - **Session ID injection** — automatically injects `session_id` into card-initiated `tools/call`
 - **Invisible context injection** — `ui/update-model-context` context injected as a plugin-sourced message via `agent.inject()`, classified as a collapsed context row (not a visible user message bubble)
 - **HTTP bridge endpoint** — `/mcp-apps/<serverName>/bridge` for secure iframe-to-MCP-server proxying
+- **Multi-instance safe** — each plugin instance registers its own per-server bridge route, so several MCP Apps servers can coexist in one DSH profile
 - **stdio + streamable-http** — supports both MCP transport types
+
+## Demo
+
+What a tool result carrying an embedded card looks like in the conversation:
+
+![MCP Apps demo cards](demo/demo-cards.png)
+
+The screenshot shows both cards of the bundled demo server ([`demo/server.mjs`](demo/server.mjs) — zero dependencies, Node stdio only):
+
+- `demo_interactive` (**inline form**): the tool *result* carries `_meta.ui.resource.text`, so the card HTML rides the result. Its buttons exercise the full bridge round trip: a `tools/call` that refreshes the card (the host auto-injects `session_id`), and `ui/update-model-context` + `ui/message` talking back to the model.
+- `demo_referenced` (**referenced form**): the tool *definition* carries `_meta.ui.resourceUri` (`ui://demo/referenced-card`); the host resolves the HTML once via `resources/read` and inlines it. The card also demonstrates the bridge's `ui://` security gate — a `file:///etc/passwd` read is refused.
+
+Try it:
+
+```bash
+# Protocol-level self-check: spawns the demo server over stdio and asserts
+# the handshake, both card forms, session_id echo, and the ui:// resource
+# table (8 checks, no DSH needed).
+node demo/selftest.mjs
+
+# Full E2E: launch dsh web with the demo overlay, then ask the model to call
+# demo_interactive and demo_referenced. Run from the PARENT directory of this
+# repo (the overlay's server path is cwd-relative); or adjust the !!js path in
+# the overlay to your layout.
+dsh web --patch dsh-mcp-apps-host/demo/mcp-apps-demo.cordis.yml
+```
 
 ## Install
 

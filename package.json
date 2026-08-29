@@ -1,14 +1,13 @@
 {
   "name": "@deepseek-ai/dsh-mcp-apps-host",
   "description": "MCP Apps Host: connects to an MCP Apps server, preserves _meta.ui in tool results, renders interactive HTML cards via sandboxed iframe, and bridges postMessage to MCP calls",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/mcp/mcp-apps-host"
+    "url": "git+https://github.com/oriliz/dsh-mcp-apps-host.git"
   },
   "type": "module",
   "main": "lib/index.js",
@@ -87,6 +86,10 @@
     "lib/invariant.js",
     "lib/client.js",
     "lib/types/**/*.d.ts",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "demo/server.mjs",
+    "demo/selftest.mjs",
+    "demo/mcp-apps-demo.cordis.yml",
+    "demo/demo-cards.png"
   ]
 }

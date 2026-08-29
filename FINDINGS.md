@@ -4,8 +4,7 @@
 
 ## P1: 工具结果未注入卡片内部渲染
 
-**日期**: 2026-08-20
-**状态**: 已修复 (2026-08-20)
+**日期**: 2026-08-20 · **状态**: 已修复 (2026-08-20)
 
 ### 问题描述
 
@@ -43,8 +42,7 @@ return n ? ("products" in n ? n : n.body ? n.body : ...) : null;
 1. **`src/index.ts` `presentationMeta()`**: 将工具结果的 `content` + `structuredContent` 包装为 `CallToolResult` 形状对象，作为 `meta.lastToolResult` 传递
 2. **`src/client/McpAppCard.tsx` `ui/initialize`**: 从 `meta.lastToolResult` 读取（回退到 `content`），传给 iframe
 
-UTP React 应用的数据流：
-`lastToolResult.structuredContent` → `body` → `products` → 渲染商品列表
+UTP React 应用的数据流：`lastToolResult.structuredContent` → `body` → `products` → 渲染商品列表
 
 ### 验证
 
@@ -63,8 +61,7 @@ UTP React 应用的数据流：
 
 ## P2: readSessionId 未使用 structuredContent 路径
 
-**日期**: 2026-08-20
-**状态**: 已修复 (2026-08-20)
+**日期**: 2026-08-20 · **状态**: 已修复 (2026-08-20)
 
 ### 问题描述
 
@@ -80,8 +77,7 @@ React Fiber 检查确认 `meta.lastToolResult.structuredContent.session_id = "uc
 
 ## P3: CSP img-src 阻断外部商品图片
 
-**日期**: 2026-08-20
-**状态**: 已修复 (2026-08-20)
+**日期**: 2026-08-20 · **状态**: 已修复 (2026-08-20)
 
 ### 问题描述
 
@@ -97,8 +93,7 @@ iframe CSP `img-src data: blob:` 仅允许 data/blob URI，阻断所有 CDN 外�
 
 ## P4: ui/update-model-context 未实现（TODO 残留）
 
-**日期**: 2026-08-20
-**状态**: 已修复 (2026-08-20)
+**日期**: 2026-08-20 · **状态**: 已修复 (2026-08-20)
 
 ### 问题描述
 

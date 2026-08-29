@@ -1,0 +1,21 @@
+# MCP Apps Host demo overlay: connect the zero-dependency demo server
+# (demo/server.mjs) and render its interactive HTML cards.
+#
+# Launch from the WORKSPACE ROOT (the parent of this repo) so the !!js
+# server path resolves:
+#   dsh web --patch dsh-mcp-apps-host/demo/mcp-apps-demo.cordis.yml
+#
+# For your own server, copy this row and change serverName/command/args —
+# see the package README for the full config surface.
+- insert:
+    - id: mcp-apps-host-demo
+      name: '@deepseek-ai/dsh-mcp-apps-host'
+      config:
+        transport: stdio
+        serverName: demo
+        command: node
+        args:
+          - !!js process.cwd() + '/dsh-mcp-apps-host/demo/server.mjs'
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 60000
