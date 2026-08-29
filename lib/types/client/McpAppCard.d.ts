@@ -8,6 +8,7 @@
  *
  * @module
  */
+import type { JSX } from 'react';
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
 /**
  * Configure the module-level API used by McpAppCard instances.

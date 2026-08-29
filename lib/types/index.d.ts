@@ -44,7 +44,7 @@ export type Config = StdioConfig | StreamableHttpConfig;
 export declare const Config: zz<Config>;
 /** Cordis plugin name. */
 export declare const name = "mcp-apps-host";
-/** Services required: tool registry + HTTP server for the iframe bridge. */
+/** Services required: tool registry + HTTP server + agent registry for context injection. */
 export declare const inject: string[];
 /**
  * Connect one MCP Apps server, register its tools with `_meta` preservation,

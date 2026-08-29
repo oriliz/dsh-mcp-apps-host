@@ -137,7 +137,7 @@ interface DiscoveredTool {
   name: string
   description: string | undefined
   inputSchema: Record<string, unknown>
-  outputSchema: unknown | undefined
+  outputSchema: unknown
   /** Tool-definition `_meta` — carries `ui.resourceUri` for resource-fetch fallback. */
   toolMeta: Record<string, unknown> | undefined
 }
@@ -156,7 +156,7 @@ async function listTools(client: Client): Promise<DiscoveredTool[]> {
       all.push({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema as Record<string, unknown>,
+        inputSchema: tool.inputSchema,
         outputSchema: tool.outputSchema,
         toolMeta: meta,
       })
@@ -226,7 +226,7 @@ function extractText(content: unknown, toolName: string): string {
     if (b.type === 'text' && typeof b.text === 'string') {
       lines.push(b.text)
     } else if (b.type === 'resource_link' && typeof b.name === 'string') {
-      lines.push(`Resource link: ${b.name} (${b.uri ?? 'unknown'})`)
+      lines.push(`Resource link: ${b.name} (${typeof b.uri === 'string' ? b.uri : 'unknown'})`)
     } else {
       lines.push(`[unsupported MCP content type: ${String(b.type)}]`)
     }
@@ -243,6 +243,7 @@ function extractText(content: unknown, toolName: string): string {
  */
 function createDefinition(
   client: Client,
+  serverName: string,
   publicName: string,
   rawName: string,
   description: string,
@@ -282,6 +283,7 @@ function createDefinition(
         const sc = v.structuredContent
         return {
           mcpApp: ui as JsonValue,
+          mcpServerName: serverName as JsonValue,
           lastToolResult: {
             content: (v.content ?? []) as JsonValue,
             ...(sc !== undefined ? { structuredContent: sc as JsonValue } : {}),
@@ -355,11 +357,15 @@ interface AppsConnection {
  * sends JSON-RPC messages (`tools/call`, `resources/read`) via postMessage;
  * the parent React component forwards them to this endpoint.
  *
+ * Each plugin instance owns its own prefix route `/mcp-apps/<serverName>`, so
+ * multi-instance setups coexist (webServer.register throws on duplicate
+ * (kind, path) — a shared `/mcp-apps` route would collide).
+ *
  * Security gate:
  * - `tools/call`: the tool name must be in the `registeredToolNames` whitelist
  * - `resources/read`: the URI must start with `ui://`
  */
-function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Context) {
+function createBridgeHandler(conn: AppsConnection, ctx: Context) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     // Only accept POST
     if (req.method !== 'POST') {
@@ -368,21 +374,11 @@ function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Cont
       return
     }
 
-    // Parse the URL: /mcp-apps/:serverName/bridge
+    // The only endpoint under this instance's prefix: /mcp-apps/<serverName>/bridge
     const url = new URL(req.url ?? '', 'http://localhost')
-    const segments = url.pathname.split('/').filter(Boolean)
-    // Expected: ['mcp-apps', '<serverName>', 'bridge']
-    if (segments.length < 3 || segments[0] !== 'mcp-apps' || segments[2] !== 'bridge') {
+    if (url.pathname !== `/mcp-apps/${conn.serverName}/bridge`) {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { code: -32601, message: 'unknown endpoint' } }))
-      return
-    }
-
-    const serverName = segments[1] ?? ''
-    const conn = connections.get(serverName)
-    if (conn === undefined) {
-      res.writeHead(404, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: { code: -32601, message: `unknown server: ${serverName}` } }))
       return
     }
 
@@ -393,7 +389,7 @@ function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Cont
 
     let message: { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> }
     try {
-      message = JSON.parse(body)
+      message = JSON.parse(body) as typeof message
     } catch {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }))
@@ -420,7 +416,7 @@ function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Cont
         }
         // Security gate: tool must be in the whitelist
         if (!conn.registeredToolNames.has(name)) {
-          replyError(-32601, `tool '${name}' is not registered on server '${serverName}'`)
+          replyError(-32601, `tool '${name}' is not registered on server '${conn.serverName}'`)
           return
         }
         const arguments_ = (p.arguments ?? {}) as Record<string, unknown>
@@ -495,35 +491,23 @@ function createBridgeHandler(connections: Map<string, AppsConnection>, ctx: Cont
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const { client, registeredToolNames } = await connectAndRegister(ctx, config)
 
-  // Store connection for the HTTP bridge handler
-  const connections = (ctx as unknown as { __mcpAppsConnections?: Map<string, AppsConnection> }).__mcpAppsConnections
-    ?? new Map<string, AppsConnection>()
-  ;(ctx as unknown as { __mcpAppsConnections?: Map<string, AppsConnection> }).__mcpAppsConnections = connections
   const conn: AppsConnection = {
     client,
     serverName: config.serverName,
     registeredToolNames,
     toolCallTimeoutMs: config.toolCallTimeoutMs,
   }
-  connections.set(config.serverName, conn)
 
-  // Register HTTP bridge endpoint (idempotent — one route for all servers)
-  ctx.effect(() => {
-    const dispose = ctx.webServer.register({
-      kind: 'prefix',
-      path: '/mcp-apps',
-      handler: createBridgeHandler(connections, ctx),
-    })
-    return () => {
-      dispose()
-      connections.delete(config.serverName)
-    }
-  }, 'mcp-apps-host: HTTP bridge')
+  // Per-instance bridge route: /mcp-apps/<serverName>/bridge
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: `/mcp-apps/${config.serverName}`,
+    handler: createBridgeHandler(conn, ctx),
+  }), 'mcp-apps-host: HTTP bridge')
 
   // Cleanup: close the MCP client on disposal
   ctx.effect(() => {
     return () => {
-      connections.delete(config.serverName)
       try { void client.close() } catch { /* transport already gone */ }
     }
   }, 'mcp-apps-host: connection cleanup')
@@ -559,6 +543,7 @@ async function connectAndRegister(
     registeredToolNames.add(tool.name)
     const def = createDefinition(
       client,
+      config.serverName,
       publicName,
       tool.name,
       tool.description ?? '',

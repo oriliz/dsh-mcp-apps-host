@@ -1,7 +1,8 @@
 /**
- * MCP Apps Host client plugin: registers `tool.call.toolview` slots for all
- * known UTP tool names, and configures the McpAppCard component with a
- * `sendUserMessage` callback that routes into the DSH conversation service.
+ * MCP Apps Host client plugin: registers `tool.call.toolview` slots for the
+ * known card-capable MCP server tool names, and configures the McpAppCard
+ * component with a `sendUserMessage` callback that routes into the DSH
+ * conversation service.
  *
  * @module @deepseek-ai/dsh-mcp-apps-host/client
  */

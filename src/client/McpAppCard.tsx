@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react'
+import type { JSX } from 'react'
 import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 
@@ -17,7 +18,7 @@ import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 
 /** Sends a user message into the DSH conversation. */
 let _sendUserMessage: ((sessionId: string, text: string) => Promise<void>) | undefined
-/** MCP server name used in the HTTP bridge URL. */
+/** Fallback bridge server name — used only when a result's meta lacks `mcpServerName`. */
 let _serverName = 'utp'
 
 /**
@@ -54,15 +55,28 @@ const _stagedContext = new Map<string, string>()
 
 /** Type guard: is this block a settled tool result? */
 function isToolResult(block: ToolCallBlock): block is ToolResultNode {
-  return (block as ToolResultNode).kind === 'tool-result'
+  return (block as { kind: string }).kind === 'tool-result'
 }
 
 /** Extract the MCP Apps UI payload from the tool result's `meta.mcpApp`. */
 function readMcpApp(block: ToolCallBlock): McpAppPayload | null {
   if (!isToolResult(block)) return null
-  const meta = (block as ToolResultNode).meta as { mcpApp?: McpAppPayload } | undefined | null
+  const meta = block.meta as { mcpApp?: McpAppPayload } | undefined | null
   if (!meta || typeof meta !== 'object') return null
   return meta.mcpApp ?? null
+}
+
+/**
+ * Which MCP server's bridge endpoint this card talks to. `presentationMeta`
+ * projects the owning server's name beside the payload; fall back to the
+ * configured default for results projected by older hosts.
+ */
+function readMcpServerName(block: ToolCallBlock): string {
+  if (isToolResult(block)) {
+    const meta = block.meta as { mcpServerName?: unknown } | undefined | null
+    if (meta && typeof meta.mcpServerName === 'string' && meta.mcpServerName !== '') return meta.mcpServerName
+  }
+  return _serverName
 }
 
 /** Build a Content-Security-Policy string from the MCP Apps CSP directives. */
@@ -141,7 +155,7 @@ function extractTextContent(params: unknown): string {
  */
 export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
   const { block, callId, sessionId } = props
-  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
   // Keep the latest block in a ref so the postMessage handler always sees it.
   const blockRef = useRef(block)
   blockRef.current = block
@@ -149,12 +163,18 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
   const mcpApp = readMcpApp(block)
 
   const handleMessage = useCallback(async (event: MessageEvent) => {
+    // Only accept JSON-RPC messages from THIS card's iframe — with several
+    // cards mounted, each instance's window listener sees every iframe's
+    // messages and would double-handle them.
+    if (event.source !== iframeRef.current?.contentWindow) return
     // Only accept JSON-RPC messages
-    const msg = event.data
-    if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') return
+    const msg: unknown = event.data
+    if (!msg || typeof msg !== 'object' || !('jsonrpc' in msg) || msg.jsonrpc !== '2.0') return
 
     const { id, method, params } = msg as { jsonrpc: string; id?: string | number; method?: string; params?: unknown }
     const hasId = id !== undefined
+    // The bridge endpoint of the server that owns this card's tool result.
+    const bridgeUrl = `/mcp-apps/${readMcpServerName(blockRef.current)}/bridge`
 
     const reply = (result: unknown): void => {
       iframeRef.current?.contentWindow?.postMessage(
@@ -227,7 +247,7 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
 
           if (staged) {
             try {
-              await fetch(`/mcp-apps/${_serverName}/bridge`, {
+              await fetch(bridgeUrl, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
@@ -275,12 +295,13 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
           }
         }
 
-        const response = await fetch(`/mcp-apps/${_serverName}/bridge`, {
+        const response = await fetch(bridgeUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(outgoingMsg),
         })
-        const result = await response.json()
+        const result: unknown = await response.json()
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- the iframe can unmount during the await.
         iframeRef.current?.contentWindow?.postMessage(result, '*')
         return
       }
@@ -288,12 +309,13 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
       // ── resources/read ──────────────────────────────────────────────────
       // Forward to the HTTP bridge (security gate: ui:// prefix only).
       if (method === 'resources/read') {
-        const response = await fetch(`/mcp-apps/${_serverName}/bridge`, {
+        const response = await fetch(bridgeUrl, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(msg),
         })
-        const result = await response.json()
+        const result: unknown = await response.json()
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- same unmount-during-await guard as above.
         iframeRef.current?.contentWindow?.postMessage(result, '*')
         return
       }
@@ -305,8 +327,9 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element | null {
   }, [callId, sessionId])
 
   useEffect(() => {
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
+    const listener = (event: MessageEvent): void => { void handleMessage(event) }
+    window.addEventListener('message', listener)
+    return () => { window.removeEventListener('message', listener) }
   }, [handleMessage])
 
   // Cleanup debounce + staged context entries on unmount
