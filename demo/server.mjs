@@ -33,38 +33,73 @@ const HTML_MIME = 'text/html;profile=mcp-app'
 // ── Card HTML ───────────────────────────────────────────────────────────────
 
 /**
- * Shared card-side bridge script. Speaks JSON-RPC over postMessage with the
- * DSH host (McpAppCard), logs every message, and exposes `rpc()` to card
- * logic. Inline `render()`-style JS is avoided; this is plain script.
+ * Shared card shell: app-window styling + the card-side bridge script. Speaks
+ * JSON-RPC over postMessage with the DSH host (McpAppCard), mirrors the latest
+ * protocol exchange into a one-line status bar, and exposes `rpc()` /
+ * `statusLine()` to card logic. Cards set their theme via --brand CSS vars.
  */
-function bridgeScript() {
+function bridgeScript({ icon, title, sub, body }) {
   return `
 <style>
-  body{font-family:system-ui,-apple-system,sans-serif;color:#1f2937;font-size:13px}
-  h2{font-size:14px;margin:0 0 8px}
-  .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-  button{padding:6px 10px;font-size:12px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer}
-  button:hover{background:#f3f4f6}
-  .tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#4338ca;font-size:11px;margin-right:6px}
-  .kv{margin:2px 0;color:#374151}
-  .kv b{color:#111827}
-  pre{background:#0f172a;color:#e2e8f0;border-radius:6px;padding:8px;font-size:11px;max-height:140px;overflow:auto;margin:8px 0 0;white-space:pre-wrap}
-  .ok{color:#059669}.err{color:#dc2626}
+  html,body{height:100%}
+  body{padding:0 !important;overflow:hidden}
+  .app{display:flex;flex-direction:column;height:100%;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 1px 3px rgba(15,23,42,.10),0 10px 28px rgba(15,23,42,.07);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:#fff}
+  .app header{display:flex;align-items:center;gap:11px;padding:11px 16px;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand2))}
+  .app header .icon{font-size:19px;line-height:1}
+  .app header .title{font-size:13.5px;font-weight:650;letter-spacing:.2px}
+  .app header .sub{font-size:10.5px;opacity:.82;margin-top:2px}
+  .badge{margin-left:auto;flex-shrink:0;font-size:10px;font-weight:600;letter-spacing:.6px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.20);border:1px solid rgba(255,255,255,.35);text-transform:uppercase}
+  .app main{flex:1;display:flex;flex-direction:column;justify-content:center;gap:13px;padding:14px 16px}
+  .metrics{display:flex;gap:14px;align-items:stretch}
+  .metric{flex:0 0 138px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:10px;background:var(--tint);border:1px solid var(--tintline);padding:14px 8px}
+  .metric .num{font-size:40px;font-weight:750;color:var(--brand);font-variant-numeric:tabular-nums;line-height:1.05}
+  .metric .label{font-size:9.5px;font-weight:650;letter-spacing:1.1px;text-transform:uppercase;color:#6b7280;margin-top:6px}
+  .side{flex:1;display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:0}
+  .note{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font-size:11.5px;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .note span{color:#94a3b8;font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;font-weight:650;margin-right:6px}
+  .kv{display:flex;align-items:center;gap:7px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden}
+  .kv b{color:#334155;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px}
+  .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .dot.ok{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.15)}
+  .dot.err{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.15)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:10px;font-weight:600;padding:2.5px 9px;border-radius:999px;background:var(--tint);color:var(--brand);border:1px solid var(--tintline);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 12px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#374151;cursor:pointer;transition:all .15s;min-width:0}
+  button:hover{background:#f8fafc;border-color:#9ca3af}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  button.primary:hover{background:var(--brand2);border-color:var(--brand2)}
+  button.danger{border-color:#fca5a5;color:#dc2626}
+  button.danger:hover{background:#fef2f2;border-color:#f87171}
+  .statusbar{flex-shrink:0;background:#0f172a;color:#94a3b8;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;line-height:1;padding:10px 14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .statusbar.ok{color:#34d399}
+  .statusbar.err{color:#f87171}
 </style>
-<div id="app"></div>
-<pre id="log"></pre>
+<div class="app">
+  <header>
+    <span class="icon">${icon}</span>
+    <div><div class="title">${title}</div><div class="sub">${sub}</div></div>
+    <span class="badge">MCP App</span>
+  </header>
+  <main>${body}</main>
+  <footer class="statusbar" id="status">connecting…</footer>
+</div>
 <script>
 (function(){
-  var pending = new Map(), nextId = 1, logEl = document.getElementById('log')
-  function log(line, cls){ logEl.textContent += line + '\\n'; logEl.scrollTop = logEl.scrollHeight }
+  var pending = new Map(), nextId = 1, statusEl = document.getElementById('status')
+  function statusLine(line, cls){
+    statusEl.textContent = line
+    statusEl.className = 'statusbar' + (cls ? ' ' + cls : '')
+  }
+  window.statusLine = statusLine
   window.rpc = function(method, params){
     var id = nextId++
     window.parent.postMessage({ jsonrpc: '2.0', id: id, method: method, params: params }, '*')
-    log('> ' + method + ' #' + id)
+    statusLine('\\u2192 ' + method + ' #' + id)
     return new Promise(function(resolve){
       pending.set(id, function(msg){
-        var ms = msg.error ? 'err' : 'ok'
-        log('< #' + id + ' ' + (msg.error ? 'ERROR ' + msg.error.message : 'ok'), ms)
+        if (msg.error) statusLine('\\u2190 #' + id + ' error: ' + msg.error.message, 'err')
+        else statusLine('\\u2190 #' + id + ' ok', 'ok')
         resolve(msg)
       })
     })
@@ -75,7 +110,6 @@ function bridgeScript() {
     var settle = pending.get(msg.id)
     if (settle) { pending.delete(msg.id); settle(msg) }
   })
-  window.log = log
 })()
 </script>`
 }
@@ -83,24 +117,46 @@ function bridgeScript() {
 /** Interactive card: lastToolResult rendering + tools/call + ui/* channels. */
 function interactiveCardHtml() {
   return `<!-- MCP Apps inline-form card: HTML lives in the tool RESULT's _meta.ui.resource.text -->
-<div>
-  <h2>🎛 MCP Apps interactive demo</h2>
-  <span class="tag">inline form</span><span class="tag">tools/call</span><span class="tag">ui/message</span>
-  <div id="state"></div>
-  <div class="row">
-    <button id="b1">Call demo_interactive via bridge (tools/call)</button>
-    <button id="b2">Stage context + message the model</button>
+<style>
+  :root{--brand:#4f46e5;--brand2:#7c3aed;--tint:#eef2ff;--tintline:#e0e7ff}
+</style>
+${bridgeScript({
+  icon: '🎛️',
+  title: 'MCP Apps interactive demo',
+  sub: "inline form — HTML rides the tool result's _meta.ui.resource.text",
+  body: `
+  <div class="metrics">
+    <div class="metric"><div class="num" id="count">–</div><div class="label">counter</div></div>
+    <div class="side">
+      <div class="note"><span>note</span><b id="note"></b></div>
+      <div class="kv"><span class="dot ok"></span>host session <b id="sid">–</b></div>
+      <div class="kv"><span class="dot" id="injdot"></span>session_id auto-injected <b id="inj">–</b></div>
+    </div>
   </div>
-</div>
-${bridgeScript()}
+  <div class="chips"><span class="chip">ui/initialize</span><span class="chip">tools/call</span><span class="chip">ui/message</span></div>
+  <div class="row">
+    <button class="primary" id="b1">↻ Refresh via tools/call</button>
+    <button id="b2">✉ Message the model</button>
+  </div>`,
+})}
 <script>
 (function(){
-  var state = { count: 0, note: '', sessionId: null }
-  function render(){
-    document.getElementById('state').innerHTML =
-      '<p class="kv">count: <b>' + state.count + '</b> · note: <b>' + (state.note || '(none)') + '</b></p>' +
-      '<p class="kv">host sessionId: <b>' + (state.sessionId || '(none)') + '</b> · session_id auto-injected on bridge calls: <b class="' + (state.received ? 'ok">yes' : 'err">no') + '</b></p>'
+  var state = { count: 0, note: '', sessionId: null, received: false }
+  var els = {
+    count: document.getElementById('count'),
+    note: document.getElementById('note'),
+    sid: document.getElementById('sid'),
+    inj: document.getElementById('inj'),
+    injdot: document.getElementById('injdot'),
   }
+  function render(){
+    els.count.textContent = String(state.count)
+    els.note.textContent = state.note || '(none)'
+    els.sid.textContent = state.sessionId || '(none)'
+    els.inj.textContent = state.received ? 'yes' : 'no'
+    els.injdot.className = 'dot ' + (state.received ? 'ok' : 'err')
+  }
+  render()
   rpc('ui/initialize').then(function(msg){
     var r = msg.result || {}
     state.sessionId = r.sessionId || null
@@ -109,7 +165,7 @@ ${bridgeScript()}
     state.note = typeof sc.note === 'string' ? sc.note : ''
     state.received = !!sc.received_session_id
     render()
-    log('ui/initialize ok — lastToolResult.structuredContent injected', 'ok')
+    statusLine('ui/initialize \\u2713 structuredContent injected (count=' + state.count + ')', 'ok')
   })
   document.getElementById('b1').onclick = function(){
     rpc('tools/call', { name: 'demo_interactive', arguments: { count: state.count + 1, note: state.note || 'refreshed from card' } })
@@ -135,32 +191,43 @@ ${bridgeScript()}
 /** Referenced card: HTML served from a ui:// resource; also demos the security gate. */
 function referencedCardHtml() {
   return `<!-- MCP Apps referenced-form card: HTML fetched by the host from ${REFERENCED_URI} -->
-<div>
-  <h2>📦 MCP Apps referenced-form demo</h2>
-  <span class="tag">resourceUri</span><span class="tag">resources/read</span><span class="tag">ui:// gate</span>
-  <div id="state"></div>
+<style>
+  :root{--brand:#0d9488;--brand2:#0284c7;--tint:#f0fdfa;--tintline:#ccfbf1}
+  .resline{display:flex;align-items:center;gap:9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px}
+  .resline .resicon{font-size:13px}
+  .resline code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:600;color:var(--brand);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .explain{font-size:12px;line-height:1.6;color:#475569}
+  .explain b{color:#0f172a}
+  .explain code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;background:#f1f5f9;padding:1px 5px;border-radius:4px;color:#334155}
+</style>
+${bridgeScript({
+  icon: '📦',
+  title: 'MCP Apps referenced-form demo',
+  sub: "referenced form — HTML fetched from the tool definition's _meta.ui.resourceUri",
+  body: `
+  <div class="resline"><span class="resicon">🔗</span><code id="src">${REFERENCED_URI}</code></div>
+  <p class="explain">This card's HTML was <b>not</b> in the tool result. The host fetched the <code>ui://</code> resource above via <code>resources/read</code> and inlined it into this sandboxed iframe.</p>
+  <div class="chips"><span class="chip">resources/read</span><span class="chip">ui:// gate</span></div>
   <div class="row">
-    <button id="b1">Read ${REFERENCED_URI}</button>
-    <button id="b2">Try blocked URI (file:///etc/passwd)</button>
-  </div>
-</div>
-${bridgeScript()}
+    <button class="primary" id="b1">⬇ Read ui:// resource</button>
+    <button class="danger" id="b2">🛡 Try blocked URI</button>
+  </div>`,
+})}
 <script>
 (function(){
   rpc('ui/initialize').then(function(msg){
     var sc = (msg.result && msg.result.lastToolResult && msg.result.lastToolResult.structuredContent) || {}
-    document.getElementById('state').innerHTML =
-      '<p class="kv">This card&apos;s HTML was NOT in the tool result. The host fetched <b>' + (sc.source || REFERENCED_URI) + '</b> via resources/read and inlined it.</p>'
-    log('ui/initialize ok — rendered from referenced resource', 'ok')
+    document.getElementById('src').textContent = sc.source || '${REFERENCED_URI}'
+    statusLine('ui/initialize \\u2713 rendered from referenced resource', 'ok')
   })
   document.getElementById('b1').onclick = function(){
     rpc('resources/read', { uri: '${REFERENCED_URI}' }).then(function(msg){
-      if (!msg.error) log('allowed: ' + (msg.result.contents[0].text.length) + ' bytes of HTML served', 'ok')
+      if (!msg.error) statusLine('allowed \\u2713 ' + msg.result.contents[0].text.length + ' bytes of HTML served', 'ok')
     })
   }
   document.getElementById('b2').onclick = function(){
     rpc('resources/read', { uri: 'file:///etc/passwd' }).then(function(msg){
-      if (msg.error) log('blocked by host security gate: ' + msg.error.message, 'err')
+      if (msg.error) statusLine('blocked \\u2717 ui://-only security gate \\u2014 ' + msg.error.message, 'err')
     })
   }
 })()
