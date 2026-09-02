@@ -9,7 +9,8 @@ MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 - **postMessage bridge** — `ui/initialize`, `tools/call`, `resources/read`, `ui/update-model-context`, `ui/message`
 - **Session ID injection** — automatically injects `session_id` into card-initiated `tools/call`
 - **Invisible context injection** — `ui/update-model-context` context injected as a plugin-sourced message via `agent.inject()`, classified as a collapsed context row (not a visible user message bubble)
-- **HTTP bridge endpoint** — `/mcp-apps/<serverName>/bridge` for secure iframe-to-MCP-server proxying
+- **HTTP bridge endpoint** — `/mcp-apps/<serverName>/bridge` for secure iframe-to-MCP-server proxying (CORS-enabled for sandboxed cards that fetch it directly)
+- **Bridge debug log** — `GET /mcp-apps/<serverName>/debug` returns the last 64 bridge exchanges; bridge calls bypass the agent pipeline and never reach the session JSONL, so this endpoint is the only place card-initiated `tools/call`s are observable
 - **Multi-instance safe** — each plugin instance registers its own per-server bridge route, so several MCP Apps servers can coexist in one DSH profile
 - **stdio + streamable-http** — supports both MCP transport types
 
