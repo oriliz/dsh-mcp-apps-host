@@ -343,6 +343,34 @@ function createDefinition(
 
 // ── HTTP Bridge Handler ────────────────────────────────────────────────────
 
+/** One bridge exchange, as exposed by `GET /mcp-apps/<serverName>/debug`. */
+interface BridgeLogEntry {
+  t: number
+  ms: number
+  method: string
+  params?: string
+  result?: string
+  error?: { code: number; message: string }
+}
+
+/** Ring-buffer capacity per server connection. */
+const BRIDGE_LOG_CAP = 64
+
+/** Max characters per truncated JSON field in the debug log. */
+const BRIDGE_LOG_CLIP = 2048
+
+/** JSON-stringify and truncate a value for the debug ring buffer. */
+function clipForLog(v: unknown): string | undefined {
+  try {
+    const s = JSON.stringify(v)
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- stringify returns undefined at runtime for undefined
+    if (s === undefined) return undefined
+    return s.length > BRIDGE_LOG_CLIP ? `${s.slice(0, BRIDGE_LOG_CLIP)}…` : s
+  } catch {
+    return undefined
+  }
+}
+
 /** One live MCP Apps connection: client + whitelist of raw tool names. */
 interface AppsConnection {
   client: Client
@@ -366,17 +394,52 @@ interface AppsConnection {
  * - `resources/read`: the URI must start with `ui://`
  */
 function createBridgeHandler(conn: AppsConnection, ctx: Context) {
+  // Debug ring buffer for this server's bridge exchanges. Bridge calls bypass the agent
+  // pipeline (no tool/call events land in the session JSONL), so this buffer is the only
+  // place they are visible. Same trust boundary as the bridge itself (localhost web server).
+  // ponytail: in-memory only, lost on restart — promote to JSONL persistence if post-mortem
+  // debugging across restarts is ever needed.
+  const log: BridgeLogEntry[] = []
+  const push = (e: BridgeLogEntry): void => { log.push(e); if (log.length > BRIDGE_LOG_CAP) log.shift() }
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const started = Date.now()
+    const elapsed = (): number => Date.now() - started
+    const url = new URL(req.url ?? '', 'http://localhost')
+
+    // Debug endpoint: dump the ring buffer for this server's bridge.
+    if (req.method === 'GET' && url.pathname === `/mcp-apps/${conn.serverName}/debug`) {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ server: conn.serverName, entries: log }))
+      return
+    }
+
+    // CORS preflight for sandboxed cards that fetch the bridge directly (their origin is opaque,
+    // so every request is cross-origin and a POST with a JSON content-type triggers OPTIONS).
+    // `null` matches exactly that opaque-origin case — regular web pages get no read access.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': 'null',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+        'access-control-max-age': '86400',
+      })
+      res.end()
+      return
+    }
+
     // Only accept POST
     if (req.method !== 'POST') {
+      push({ t: started, ms: elapsed(), method: `${req.method ?? '(none)'} ${url.pathname}`,
+        error: { code: -32601, message: 'method not allowed' } })
       res.writeHead(405, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { code: -32601, message: 'method not allowed' } }))
       return
     }
 
     // The only endpoint under this instance's prefix: /mcp-apps/<serverName>/bridge
-    const url = new URL(req.url ?? '', 'http://localhost')
     if (url.pathname !== `/mcp-apps/${conn.serverName}/bridge`) {
+      push({ t: started, ms: elapsed(), method: `${req.method} ${url.pathname}`,
+        error: { code: -32601, message: 'unknown endpoint' } })
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { code: -32601, message: 'unknown endpoint' } }))
       return
@@ -387,22 +450,32 @@ function createBridgeHandler(conn: AppsConnection, ctx: Context) {
     req.on('data', (chunk: Buffer) => { body += chunk.toString() })
     await new Promise<void>(resolve => req.on('end', resolve))
 
+    // Same-origin posts (the McpAppCard postMessage path) ignore CORS headers; sandboxed cards
+    // that fetch directly need them on every response, not just the preflight.
+    const jsonHeaders = { 'content-type': 'application/json', 'access-control-allow-origin': 'null' }
+
     let message: { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> }
     try {
       message = JSON.parse(body) as typeof message
     } catch {
-      res.writeHead(400, { 'content-type': 'application/json' })
+      push({ t: started, ms: elapsed(), method: '(parse error)', params: body.slice(0, BRIDGE_LOG_CLIP) })
+      res.writeHead(400, jsonHeaders)
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }))
       return
     }
 
     const { id, method, params } = message
+    const clippedParams = clipForLog(params)
+    const base = { t: started, method: method ?? '(none)', ...clippedParams === undefined ? {} : { params: clippedParams } }
     const reply = (result: unknown): void => {
-      res.writeHead(200, { 'content-type': 'application/json' })
+      const clipped = clipForLog(result)
+      push({ ...base, ms: elapsed(), ...clipped === undefined ? {} : { result: clipped } })
+      res.writeHead(200, jsonHeaders)
       res.end(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result }))
     }
     const replyError = (code: number, msg: string): void => {
-      res.writeHead(200, { 'content-type': 'application/json' })
+      push({ ...base, ms: elapsed(), error: { code, message: msg } })
+      res.writeHead(200, jsonHeaders)
       res.end(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, error: { code, message: msg } }))
     }
 
