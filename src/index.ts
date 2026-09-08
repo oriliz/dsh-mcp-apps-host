@@ -480,6 +480,21 @@ function createBridgeHandler(conn: AppsConnection, ctx: Context) {
     }
 
     try {
+      if (method === 'tools/list') {
+        // Direct-drive/debug surface: the tool inventory (names + `_meta.ui` resourceUri)
+        // so `testctl tool --card` can discover the referenced-form card HTML source.
+        // No security gate needed: schemas are model-visible anyway; tools/call stays
+        // whitelist-guarded.
+        const tools = await listTools(conn.client)
+        reply({ tools: tools.map(t => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          ...t.toolMeta !== undefined ? { _meta: t.toolMeta } : {},
+        })) })
+        return
+      }
+
       if (method === 'tools/call') {
         const p = params ?? {}
         const name = p.name
