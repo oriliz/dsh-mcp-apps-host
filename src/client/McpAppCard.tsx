@@ -121,6 +121,17 @@ function readSessionId(block: ToolResultNode): string | undefined {
   return undefined
 }
 
+/** Parse a tool call's raw JSON arguments for the tool-input notification replay. */
+function parseToolArgs(raw: string | null | undefined): Record<string, unknown> {
+  if (typeof raw !== 'string' || raw === '') return {}
+  try {
+    const v: unknown = JSON.parse(raw)
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
 /** Extract text from a JSON-RPC params object (handles string | { text } | { content[] }). */
 function extractTextContent(params: unknown): string {
   if (typeof params === 'string') return params
@@ -183,7 +194,9 @@ function PlainToolRow({ toolName, block }: { toolName: string; block: ToolCallBl
  * communicates with the parent via `postMessage` using JSON-RPC messages.
  *
  * Supported postMessage methods:
- * - `ui/initialize` — handshake: returns host capabilities + lastToolResult + sessionId
+ * - `ui/initialize` — handshake: returns host capabilities + lastToolResult + sessionId,
+ *   then replays the tool call as `ui/notifications/tool-input` + `tool-result`
+ *   notifications (new-spec cards ignore lastToolResult and only listen to these)
  * - `tools/call` — forwarded to the HTTP bridge (`/mcp-apps/<serverName>/bridge`)
  * - `resources/read` — forwarded to the HTTP bridge (security: `ui://` prefix only)
  * - `ui/update-model-context` — staged as context for the next user message
@@ -248,8 +261,28 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element {
           // Prefer structuredContent (passed via presentationMeta as
           // meta.lastToolResult); fall back to the content text blocks.
           const meta = currentBlock.meta as { lastToolResult?: unknown } | undefined
-          result.lastToolResult = meta?.lastToolResult ?? currentBlock.content
+          const lastToolResult = meta?.lastToolResult ?? currentBlock.content
+          result.lastToolResult = lastToolResult
           result.sessionId = readSessionId(currentBlock)
+          reply(result)
+          // New-spec cards (e.g. UTP catalog v5) ignore lastToolResult in the
+          // handshake reply and instead subscribe to push notifications
+          // (ui/notifications/tool-input / tool-result). A card that mounts
+          // after the tool already settled — session replay, injected preview
+          // sessions — would otherwise stay on its empty fallback view (search
+          // form). Replay the call into the iframe right after the reply;
+          // FIFO postMessage delivery guarantees the handshake lands first and
+          // the card registers its subscriptions before initialize resolves.
+          const notify = (m: string, params: unknown): void => {
+            iframeRef.current?.contentWindow?.postMessage({ jsonrpc: '2.0', method: m, params }, '*')
+          }
+          const name = currentBlock.call?.name ?? toolName
+          notify('ui/notifications/tool-input', { name, arguments: parseToolArgs(currentBlock.call?.argsRaw) })
+          const base = typeof lastToolResult === 'object' && !Array.isArray(lastToolResult)
+            ? lastToolResult as Record<string, unknown>
+            : { content: currentBlock.content }
+          notify('ui/notifications/tool-result', { name, result: { ...base, isError: currentBlock.isError } })
+          return
         }
         reply(result)
         return
@@ -367,7 +400,7 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element {
     } catch (error: unknown) {
       replyError(-32603, `internal error: ${error instanceof Error ? error.message : String(error)}`)
     }
-  }, [callId, sessionId])
+  }, [callId, sessionId, toolName])
 
   useEffect(() => {
     const listener = (event: MessageEvent): void => { void handleMessage(event) }

@@ -7,6 +7,7 @@ MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 - **Tool discovery with `_meta` preservation** — MCP tools registered with full `_meta.ui` payloads intact
 - **Interactive HTML cards** — sandboxed iframe rendering with per-card CSP
 - **postMessage bridge** — `ui/initialize`, `tools/call`, `resources/read`, `ui/update-model-context`, `ui/message`
+- **Result replay notifications** — after the `ui/initialize` reply the host posts `ui/notifications/tool-input` and `ui/notifications/tool-result` in FIFO order; new-spec cards ignore `lastToolResult` and subscribe to these notifications only, so late-mounting cards (replay / injected sessions) still restore the tool result
 - **Session ID injection** — automatically injects `session_id` into card-initiated `tools/call`
 - **Invisible context injection** — `ui/update-model-context` context injected as a plugin-sourced message via `agent.inject()`, classified as a collapsed context row (not a visible user message bubble)
 - **HTTP bridge endpoint** — `/mcp-apps/<serverName>/bridge` for secure iframe-to-MCP-server proxying (CORS-enabled for sandboxed cards that fetch it directly)

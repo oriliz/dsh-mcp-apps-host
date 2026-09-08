@@ -118,3 +118,11 @@ iframe CSP `img-src data: blob:` 仅允许 data/blob URI，阻断所有 CDN 外�
 - **修复前**: `{ 'io.modelcontextprotocol/ui': {} }` — UTP 服务器 0/26 工具返回 `_meta`
 - **修复后**: `{ 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } }` — 17/26 工具返回 `_meta`
 - **根因**: UTP 服务器 `supportsMCPApps()`（Go 源码 `server.go` 第 367-400 行）要求 `mimeTypes` 数组含 `"text/html;profile=mcp-app"`
+
+### 新版卡片数据通道：ui/notifications/* 推送（P2，2026-09-07 修复）
+
+- **症状**：直调注入（testctl tool --card）与会话回放的卡片只渲染空搜索表单，不渲染 lastToolResult 的商品列表。
+- **根因**：新版 MCP Apps 卡片（UTP catalog v5+）的 `ui/initialize` 处理只读 `hostContext`（主题/安全区样式）和 `sessionId`，**bundle 里 `lastToolResult` 0 命中**——数据通道改为订阅两条推送通知：`ui/notifications/tool-input`（params `{name, arguments}`）与 `ui/notifications/tool-result`（params `{name, result: CallToolResult}`，卡片侧 `vo(e)=e?.result??e` 解包）。宿主只实现旧协议（握手响应带 lastToolResult），晚挂载的卡片（回放/注入会话）收不到任何数据，落在空 fallback 视图。UTP 侧佐证：cart 卡片走 `initialView='cart'` 制品方案正是为了绕开对通知的依赖（utp-skill-dev FINDINGS #828）。
+- **修复**（`src/client/McpAppCard.tsx` `ui/initialize` handler）：应答握手后按 FIFO 顺序补发两条通知——`tool-input`（name 取 `block.call.name`，arguments 解析 `call.argsRaw`）+ `tool-result`（`{...lastToolResult, isError}`）。卡片在挂载时（子组件 effect 先于父组件 initialize effect）就已注册订阅，时序安全。旧协议字段 lastToolResult 保留，向后兼容。
+- **验证**：utp-dev lane 实测——昨日注入的「儿童保温杯」会话（此前显示搜索表单）重新渲染出 20 商品完整列表；新注入「数据线」（服务端返回 0 商品）正确渲染空态「搜索『数据线』没有找到相关商品」，标题关键词证明 tool-input 通知生效；卡片内点击商品 → bridge tools/call 2758ms OK。截图 research/toolresult-notify-fix-card.png。
+- **注意**：`structuredContent.surface_id`（新版结果多出的字段）与该问题无关，勿再误判为卡片行为变化。
