@@ -23,6 +23,9 @@
       "path": "../../core/tools"
     },
     {
+      "path": "../../util/values"
+    },
+    {
       "path": "../../subprocess/subprocess"
     },
     {
@@ -35,7 +38,10 @@
       "path": "../../host/webserver"
     },
     {
-      "path": "../../client/runtime"
+      "path": "../../client/ui-chat"
+    },
+    {
+      "path": "../../client/ui-renderer"
     },
     {
       "path": "../../client/ui-tool"

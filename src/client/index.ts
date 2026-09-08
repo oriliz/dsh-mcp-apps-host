@@ -8,14 +8,16 @@
  * @module @deepseek-ai/dsh-mcp-apps-host/client
  */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: pulls the SlotRegistry service merge (ctx.slots).
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import { McpAppCard, configureMcpAppCard } from './McpAppCard.tsx'
 
 // ── Client plugin ─────────────────────────────────────────────────────────
 
-/** Services required: slot registry + sessions (transcript discovery + conversation send). */
-export const inject = ['slots', 'sessions']
+/** Services required: slot registry + sessions + conversation assembly (transcript discovery + conversation send). */
+export const inject = ['slots', 'sessions', 'uiConversation']
 
 /**
  * Mount the MCP Apps card view. No hardcoded server/tool list: the plugin
@@ -81,17 +83,24 @@ export function apply(ctx: ClientContext): void {
     for (const child of n.blocks ?? []) visit(child)
   }
 
-  // Duck-typed read of the current session's snapshot (the typed face lives
-  // in the runtime package; this plugin only needs the transcript list).
-  type SessionSnapshotSource = {
-    getSnapshot(): { nodes: readonly unknown[] }
+  // Duck-typed read of the current session's chat transcript. The flat node
+  // array lives on the ChatSnapshot that ui-conversation assembles per session:
+  // `uiConversation.binding(binding).target('chat')` is the same source the
+  // chat view subscribes to (new master keeps the flat array in `legacy.nodes`;
+  // the top-level `nodes` is a keyed store — the fallback covers old master).
+  type ChatSnapshotSource = {
+    getSnapshot(): { nodes?: readonly unknown[]; legacy?: { nodes?: readonly unknown[] } }
     subscribe(fn: () => void): () => void
   }
   type SessionsFace = {
     list: { getSnapshot(): { current?: unknown }; subscribe(fn: () => void): () => void }
-    binding(id: string): { session?: unknown } | undefined
+    binding(id: string): unknown
+  }
+  type UiConversationFace = {
+    binding(source: unknown): { target(name: string): ChatSnapshotSource }
   }
   const sessions = ctx.get('sessions') as unknown as SessionsFace | undefined
+  const uiConversation = ctx.get('uiConversation') as unknown as UiConversationFace | undefined
 
   // Follow the current session: subscribe to its transcript, scan immediately
   // (history restore), and re-scan on every store notification (live calls —
@@ -102,12 +111,15 @@ export function apply(ctx: ClientContext): void {
     unsubscribeSession = undefined
     const current = sessions?.list.getSnapshot().current
     if (typeof current !== 'string') return
-    const session = sessions?.binding(current)?.session as SessionSnapshotSource | undefined
-    if (session === undefined) return
+    const binding = sessions?.binding(current)
+    if (binding === undefined || uiConversation === undefined) return
+    const chat = uiConversation.binding(binding).target('chat')
     const scan = (): void => {
-      for (const node of session.getSnapshot().nodes) visit(node)
+      const snapshot = chat.getSnapshot()
+      const nodes = snapshot.legacy?.nodes ?? snapshot.nodes
+      if (nodes !== undefined) for (const node of nodes) visit(node)
     }
-    unsubscribeSession = session.subscribe(scan)
+    unsubscribeSession = chat.subscribe(scan)
     scan()
   }
 

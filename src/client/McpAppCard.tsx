@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef } from 'react'
 import type { JSX } from 'react'
-import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 
 // ── Module-level API (set by the client plugin apply) ─────────────────────
