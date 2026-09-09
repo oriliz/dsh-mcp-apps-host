@@ -440,6 +440,7 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element {
       <iframe
         ref={iframeRef}
         sandbox="allow-scripts allow-forms allow-popups"
+        allow="clipboard-write"
         srcDoc={srcDoc}
         style={{
           width: '100%',
