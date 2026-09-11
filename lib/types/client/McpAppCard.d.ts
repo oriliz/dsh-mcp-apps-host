@@ -23,7 +23,9 @@ export declare function configureMcpAppCard(opts: {
  * communicates with the parent via `postMessage` using JSON-RPC messages.
  *
  * Supported postMessage methods:
- * - `ui/initialize` — handshake: returns host capabilities + lastToolResult + sessionId
+ * - `ui/initialize` — handshake: returns host capabilities + lastToolResult + sessionId,
+ *   then replays the tool call as `ui/notifications/tool-input` + `tool-result`
+ *   notifications (new-spec cards ignore lastToolResult and only listen to these)
  * - `tools/call` — forwarded to the HTTP bridge (`/mcp-apps/<serverName>/bridge`)
  * - `resources/read` — forwarded to the HTTP bridge (security: `ui://` prefix only)
  * - `ui/update-model-context` — staged as context for the next user message

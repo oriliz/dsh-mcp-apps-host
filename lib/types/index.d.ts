@@ -14,7 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import zz from '@deepseek-ai/schemastery';
-import type { JsonValue } from '@deepseek-ai/dsh-tools';
+import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 /** Canonical MCP result exposed to programmatic callers with `_meta` intact. */
 export type McpAppsResult = {
     content: JsonValue[];

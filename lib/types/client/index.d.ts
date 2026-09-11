@@ -7,8 +7,8 @@
  *
  * @module @deepseek-ai/dsh-mcp-apps-host/client
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
-/** Services required: slot registry + sessions (transcript discovery + conversation send). */
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
+/** Services required: slot registry + sessions + conversation assembly (transcript discovery + conversation send). */
 export declare const inject: string[];
 /**
  * Mount the MCP Apps card view. No hardcoded server/tool list: the plugin
