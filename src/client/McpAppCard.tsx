@@ -147,6 +147,41 @@ function extractTextContent(params: unknown): string {
   return ''
 }
 
+// ── Auto-expand: keep cards visible without manual fold clicks ─────────────
+// DSH folds the message process block ("已完成，用时 X 秒") and the tool group
+// ("已调用工具") when a turn settles, hiding any card mounted between them.
+// Expand both governing folds of a card row (synthetic `.click()` suffices —
+// both toggles are plain React buttons) and re-expand on later settle
+// collapses until the user toggles a fold in this message themselves.
+
+/** Debounce for the post-settle re-expansion pass. */
+const FOLD_SETTLE_DEBOUNCE_MS = 300
+
+/** Click the collapsed fold toggles that govern this card row. */
+function expandCardFolds(cardEl: HTMLElement | null): void {
+  if (cardEl === null || !cardEl.isConnected) return
+  // Tool-group fold (ChatGroupSeat around this card row).
+  const group = cardEl.closest('[class*="O_Ebla_root"]')
+  const groupToggle = group?.querySelector('button[aria-expanded="false"]')
+  if (groupToggle instanceof HTMLElement) groupToggle.click()
+  // Message-level fold header sits before the group in document order; only
+  // candidates ahead of the group qualify (trailing buttons — the usage pill —
+  // must not be touched).
+  const column = cardEl.closest('[class*="EvIC1a_column"]')
+  if (!column) return
+  const headerToggle = [...column.querySelectorAll('button[aria-expanded="false"]')].find(
+    (b) => group ? !group.contains(b) && (group.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING) !== 0 : true,
+  )
+  if (headerToggle instanceof HTMLElement) headerToggle.click()
+}
+
+/** content-visibility-aware visibility probe (the option is unknown to older TS lib versions). */
+function isElementVisible(el: HTMLElement): boolean {
+  return (el.checkVisibility as unknown as (opts?: { contentVisibilityAuto?: boolean }) => boolean)({
+    contentVisibilityAuto: true,
+  })
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 /** First text line of a settled result, truncated for the plain row. */
@@ -415,6 +450,45 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element {
       _stagedContext.delete(callId)
     }
   }, [callId])
+
+  // Auto-expand: on mount, when a settle pass re-collapses this card row, and
+  // after any DOM/aria churn, re-expand the governing folds while the card is
+  // hidden. Stops for good once the user toggles a fold in this message (their
+  // intent wins; a trusted click is the discriminator against our own
+  // synthetic `.click()` calls).
+  const hasCard = typeof mcpApp?.resource?.text === 'string'
+  useEffect(() => {
+    if (!hasCard) return
+    let userTookOver = false
+    const onUserToggle = (event: Event): void => {
+      if (!event.isTrusted) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('button[aria-expanded]') === null) return
+      const column = iframeRef.current?.closest('[class*="EvIC1a_column"]')
+      if (column?.contains(target) ?? false) userTookOver = true
+    }
+    document.addEventListener('click', onUserToggle, true)
+    const expand = (): void => {
+      const el = iframeRef.current
+      if (el === null || userTookOver || isElementVisible(el)) return
+      expandCardFolds(el)
+    }
+    expand()
+    let timer: number | undefined
+    const observer = new MutationObserver(() => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(expand, FOLD_SETTLE_DEBOUNCE_MS)
+    })
+    // aria-expanded mutations catch the fold toggles; subtree churn catches
+    // mounts inside content-visibility-hidden ancestors (no layout signals).
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-expanded'] })
+    return () => {
+      document.removeEventListener('click', onUserToggle, true)
+      observer.disconnect()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [hasCard])
 
   // No MCP Apps payload on this result: the tool either still runs or returns
   // mixed card/plain results — render the plain row (the keyed slot has no
