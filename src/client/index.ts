@@ -109,7 +109,25 @@ export function apply(ctx: ClientContext): void {
   const followCurrent = (): void => {
     unsubscribeSession?.()
     unsubscribeSession = undefined
-    const current = sessions?.list.getSnapshot().current
+    const listSnap = sessions?.list.getSnapshot() as unknown as {
+      current?: unknown
+      byId?: Record<string, { retainedBy?: Record<string, unknown> }>
+    } | undefined
+    let current = listSnap?.current
+    if (typeof current !== 'string') {
+      // Older clients (e.g. 0.1.6) expose no top-level `current`; the session
+      // retained by the main view is the one the user is looking at.
+      let best: string | undefined
+      let bestCount = 0
+      for (const [id, summary] of Object.entries(listSnap?.byId ?? {})) {
+        const count = Number(summary?.retainedBy?.mainView ?? 0)
+        if (Number.isFinite(count) && count > bestCount) {
+          best = id
+          bestCount = count
+        }
+      }
+      current = best
+    }
     if (typeof current !== 'string') return
     const binding = sessions?.binding(current)
     if (binding === undefined || uiConversation === undefined) return
