@@ -157,22 +157,29 @@ function extractTextContent(params: unknown): string {
 /** Debounce for the post-settle re-expansion pass. */
 const FOLD_SETTLE_DEBOUNCE_MS = 300
 
-/** Click the collapsed fold toggles that govern this card row. */
-function expandCardFolds(cardEl: HTMLElement | null): void {
-  if (cardEl === null || !cardEl.isConnected) return
-  // Tool-group fold (ChatGroupSeat around this card row).
-  const group = cardEl.closest('[class*="O_Ebla_root"]')
-  const groupToggle = group?.querySelector('button[aria-expanded="false"]')
-  if (groupToggle instanceof HTMLElement) groupToggle.click()
-  // Message-level fold header sits before the group in document order; only
-  // candidates ahead of the group qualify (trailing buttons — the usage pill —
-  // must not be touched).
+/**
+ * Collapsed toggles that actually govern this card row:
+ * - tool-group folds whose `aria-controls` panel contains the card;
+ * - the message-level process fold of the card's own turn (`data-turn-process`).
+ * Popover buttons are never folds — the per-turn usage pill carries
+ * `aria-haspopup="dialog"`, and clicking it opened its dialog on every DOM
+ * mutation, which made the popover hop between anchors.
+ */
+function governingFoldToggles(cardEl: HTMLElement): HTMLElement[] {
   const column = cardEl.closest('[class*="EvIC1a_column"]')
-  if (!column) return
-  const headerToggle = [...column.querySelectorAll('button[aria-expanded="false"]')].find(
-    (b) => group ? !group.contains(b) && (group.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING) !== 0 : true,
-  )
-  if (headerToggle instanceof HTMLElement) headerToggle.click()
+  if (column === null) return []
+  const turn = cardEl.closest('[data-chat-turn]')?.getAttribute('data-chat-turn') ?? null
+  const toggles: HTMLElement[] = []
+  for (const toggle of column.querySelectorAll<HTMLElement>('button[aria-expanded="false"]')) {
+    if (toggle.hasAttribute('aria-haspopup')) continue
+    const panelId = toggle.getAttribute('aria-controls')
+    if (panelId !== null) {
+      if (toggle.ownerDocument.getElementById(panelId)?.contains(cardEl) === true) toggles.push(toggle)
+      continue
+    }
+    if (turn !== null && toggle.getAttribute('data-turn-process') === turn) toggles.push(toggle)
+  }
+  return toggles
 }
 
 /** content-visibility-aware visibility probe (the option is unknown to older TS lib versions). */
@@ -469,10 +476,17 @@ export function McpAppCard(props: ToolCallViewProps): JSX.Element {
       if (column?.contains(target) ?? false) userTookOver = true
     }
     document.addEventListener('click', onUserToggle, true)
+    // A toggle that collapses again after we clicked it does not reveal this
+    // card; forget it instead of clicking every debounce pass.
+    const clickedToggles = new WeakSet<HTMLElement>()
     const expand = (): void => {
       const el = iframeRef.current
       if (el === null || userTookOver || isElementVisible(el)) return
-      expandCardFolds(el)
+      for (const toggle of governingFoldToggles(el)) {
+        if (clickedToggles.has(toggle)) continue
+        clickedToggles.add(toggle)
+        toggle.click()
+      }
     }
     expand()
     let timer: number | undefined
