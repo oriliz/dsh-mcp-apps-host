@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-mcp-apps-host",
-  "description": "MCP Apps Host: connects to an MCP Apps server, preserves _meta.ui in tool results, renders interactive HTML cards via sandboxed iframe, and bridges postMessage to MCP calls",
-  "version": "0.1.0-rc.2",
+  "description": "MCP Apps Host for DeepSeek Harness: connects to an MCP Apps server, preserves _meta.ui in tool results, renders interactive HTML cards in sandboxed iframes, and bridges postMessage to MCP calls",
+  "version": "0.2.0",
   "publishConfig": {
     "access": "public"
   },
@@ -17,16 +17,13 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
-    },
     "./client": {
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "dsh": {
     "bundle": {
@@ -34,10 +31,11 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-tool",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-locale"
+        "@deepseek-ai/dsh-client-ui-tool"
       ],
       "platform": "web"
     }
@@ -48,7 +46,6 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-invariants": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-util-values": "*",
     "@deepseek-ai/dsh-subprocess": "*",
@@ -69,7 +66,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/dsh-util-values": "workspace:^",
     "@deepseek-ai/dsh-subprocess": "workspace:^",
@@ -87,19 +83,16 @@
   },
   "files": [
     "lib/index.js",
-    "lib/invariant.js",
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
+    "locale/*.json",
     "demo/server.mjs",
     "demo/selftest.mjs",
     "demo/mcp-apps-demo.cordis.yml",
     "demo/demo-cards.png"
   ],
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-invariants": {
-      "optional": true
-    },
     "@deepseek-ai/dsh-tools": {
       "optional": true
     },

@@ -2,6 +2,8 @@
 
 MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Connects to an MCP server that declares the `io.modelcontextprotocol/ui` extension, preserves `_meta.ui` in tool results, renders interactive HTML cards in sandboxed iframes, and bridges `postMessage` between cards and the MCP server.
 
+Built and verified against **DSH 0.2.x** (`0.2.2-rc.3` at the time of writing). The client half follows the `tool.call.toolview` slot and the `uiConversation` chat target; the package carries no invariant companion (DSH removed runtime invariants in `0.2.0-rc.2`).
+
 ## Features
 
 - **Tool discovery with `_meta` preservation** — MCP tools registered with full `_meta.ui` payloads intact
@@ -14,6 +16,7 @@ MCP Apps Host plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 - **Bridge debug log** — `GET /mcp-apps/<serverName>/debug` returns the last 64 bridge exchanges; bridge calls bypass the agent pipeline and never reach the session JSONL, so this endpoint is the only place card-initiated `tools/call`s are observable
 - **Multi-instance safe** — each plugin instance registers its own per-server bridge route, so several MCP Apps servers can coexist in one DSH profile
 - **stdio + streamable-http** — supports both MCP transport types
+- **Installable bundle** — `dsh plugin add` inserts one unconfigured row that stays dormant until you fill it in at **Settings → Plugins** (no hand-written overlay required)
 
 ## Demo
 
@@ -43,15 +46,63 @@ dsh web --patch dsh-mcp-apps-host/demo/mcp-apps-demo.cordis.yml
 
 ## Install
 
-Not on npm yet — install from GitHub. The DSH host provides all `@deepseek-ai/dsh-*` peer packages at runtime, so no peer install is needed:
+```bash
+dsh plugin --profile web add github:oriliz/dsh-mcp-apps-host
+```
+
+The bundle patch inserts one `mcp-apps-host` row with an empty config. It stays
+dormant (and logs why) until you give it a server to connect to. Configure it by
+adding an id-targeted override to your profile's `cordis.patch.yml` (or to any
+`--patch` overlay):
+
+```yaml
+- id: mcp-apps-host
+  config:
+    transport: stdio
+    serverName: my-server
+    command: my-apps-server
+    args: []
+```
+
+Fields:
+
+- `serverName` — short server id; also the tool prefix `mcp__<serverName>__*`
+  and the bridge path `/mcp-apps/<serverName>/bridge`
+- `transport` — `stdio` or `streamable-http`
+- `command` + `args` (stdio) **or** `url` (streamable-http)
+
+Restart the plugin (or DSH) after saving. The DSH host provides all
+`@deepseek-ai/dsh-*` peer packages at runtime, so no peer install is needed.
+
+### One row per server
+
+To run several MCP Apps servers, add more rows in your profile's patch layer or
+in a `--patch` overlay — one plugin instance per server, each with its own
+`serverName`:
+
+```yaml
+- insert:
+    - id: mcp-apps-host-my-server
+      name: '@deepseek-ai/dsh-mcp-apps-host'
+      config:
+        transport: stdio
+        serverName: my-server
+        command: my-apps-server
+        args: []
+        env: {}
+        cwd: ''
+        toolCallTimeoutMs: 60000
+```
+
+A ready-to-edit template ships in [`examples/connect-server.patch.yml`](examples/connect-server.patch.yml):
 
 ```bash
-npm install github:oriliz/dsh-mcp-apps-host
+dsh web --patch ./examples/connect-server.patch.yml
 ```
 
 ### From source
 
-All dsh peer packages resolve inside the [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) pnpm workspace, so build there (this also matches the layout the bundled `lib/` was built in):
+The source layout mirrors the [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) pnpm workspace, and the committed `lib/` is the built artifact (the npm install path ships it as-is; there is no build step on install):
 
 ```bash
 git clone https://github.com/deepseek-ai/deepseek-harness.git
@@ -66,7 +117,10 @@ pnpm --filter @deepseek-ai/dsh-mcp-apps-host bundle
 
 ### 1. Configure the connection
 
-Declare one plugin instance per MCP Apps server in your overlay (`serverName` picks both the tool prefix `mcp__<serverName>__*` and the bridge path `/mcp-apps/<serverName>/bridge`). A ready-to-edit template ships in [`examples/connect-server.patch.yml`](examples/connect-server.patch.yml):
+Override the installed row's id as described in [Install](#install), or
+declare one plugin instance per MCP Apps server in a `--patch` overlay
+(`serverName` picks both the tool prefix `mcp__<serverName>__*` and the bridge
+path `/mcp-apps/<serverName>/bridge`):
 
 ```yaml
 - insert:
@@ -107,20 +161,25 @@ Tool results flow left to right (server → tool registry → conversation → c
 | `src/index.ts` | Server-side: MCP connection, tool registration, HTTP bridge |
 | `src/client/McpAppCard.tsx` | Card component: iframe, postMessage handling |
 | `src/client/index.ts` | Client plugin: slot registration, sendUserMessage |
-| `src/invariant.ts` | Cordis companion (no runtime invariant) |
+| `cordis.patch.yml` | Bundle patch: inserts the installable `mcp-apps-host` row |
+| `locale/` | Plugin title and description shown in Plugin Manager |
+| `lib/` | Committed build artifacts served by `dsh plugin add` |
 | `demo/` | Zero-dependency demo server + protocol self-test + overlay |
 | `examples/` | Connection overlay template |
 
 ## Development
 
 ```bash
-# Build
+# Build (inside the deepseek-harness workspace)
 npx tsc -b packages/mcp/mcp-apps-host/tsconfig.json
 pnpm --filter @deepseek-ai/dsh-mcp-apps-host bundle
 
 # Run DSH with the plugin
 dsh --profile web --patch ./examples/connect-server.patch.yml --port 8089
 ```
+
+`lib/` is committed because the install path (`dsh plugin add github:...`) does
+not run a build. Rebuild it together with `src/` when you change the plugin.
 
 ## Pitfalls Fixed
 
@@ -132,6 +191,7 @@ dsh --profile web --patch ./examples/connect-server.patch.yml --port 8089
 | P3 | External images blocked by CSP | `buildCsp()` adds `https:` to default `img-src` |
 | P4 | `ui/update-model-context` was TODO | `_stagedContext` Map stores and prepends context |
 | P5 | Context visible as user message text | `ui/inject-context` bridge injects via `agent.inject()` as plugin-sourced message |
+| P6 | Bundle installed nothing to configure | Patch inserts a defaulted row that no-ops until `serverName`/`command` (or `url`) are set (override it by id) |
 
 See [FINDINGS.md](./FINDINGS.md) for detailed root cause analysis.
 

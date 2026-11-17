@@ -126,3 +126,26 @@ iframe CSP `img-src data: blob:` 仅允许 data/blob URI，阻断所有 CDN 外�
 - **修复**（`src/client/McpAppCard.tsx` `ui/initialize` handler）：应答握手后按 FIFO 顺序补发两条通知——`tool-input`（name 取 `block.call.name`，arguments 解析 `call.argsRaw`）+ `tool-result`（`{...lastToolResult, isError}`）。卡片在挂载时（子组件 effect 先于父组件 initialize effect）就已注册订阅，时序安全。旧协议字段 lastToolResult 保留，向后兼容。
 - **验证**：utp-dev lane 实测——昨日注入的「儿童保温杯」会话（此前显示搜索表单）重新渲染出 20 商品完整列表；新注入「数据线」（服务端返回 0 商品）正确渲染空态「搜索『数据线』没有找到相关商品」，标题关键词证明 tool-input 通知生效；卡片内点击商品 → bridge tools/call 2758ms OK。截图 research/toolresult-notify-fix-card.png。
 - **注意**：`structuredContent.surface_id`（新版结果多出的字段）与该问题无关，勿再误判为卡片行为变化。
+
+## DSH 0.2.x 适配（2026-11-18）
+
+**背景**：仓库最后一版构建针对 DSH 0.1.5-rc 时代，`lib/` 是在 monorepo 里手工重建的。DSH 0.2.2-rc.3 下重新做了一轮端到端验证与清理。
+
+### 实测仍然可用（0.2.2-rc.3）
+
+- `tool.call.toolview` keyed slot 仍然存在，卡片的注册与渲染路径不变。
+- `uiConversation.binding(...).target('chat')` 与 `sessions.list.getSnapshot().current` 仍可驱动"跟随当前会话"；历史会话回放也能注册到对应工具。
+- 宿主侧 `ctx.tools.register`、`ctx.webServer.register`、`ctx.agents.get/inject`、`scrubbedParentEnv`、`assertSupportedJsonSchema` 均未变。
+- 端到端（0.2.2-rc.3 + demo server）：模型调用 `demo_interactive` → 卡片渲染 → 点击卡片内 "Refresh via tools/call" → 计数从 0 变 1；`GET /mcp-apps/demo/debug` 显示注入后的 `session_id`。
+
+### 需要改的
+
+1. **运行时 invariant 已移除**（0.2.0-rc.2）：删掉 `src/invariant.ts`、`./invariant` 导出、`@deepseek-ai/dsh-invariants` 依赖与 tsconfig reference。DSH 不再发布该包与任何 `<package>/invariant` 子路径。
+2. **客户端 manifest 的 inject 列表**：`@deepseek-ai/dsh-client-ui-slots` 不再是独立的 client 插件（类型仍在，运行时由 renderer 提供）。改为官方 client 插件实际依赖的一组：`dsh-api-session-controller`、`dsh-client-locale`、`dsh-client-ui-conversation`、`dsh-client-ui-renderer`、`dsh-client-ui-tool`。
+3. **`ToolCallViewProps` 变成 preparing/start/result 判别联合**：卡片组件只在有 settled result 后注册，运行时不受影响；源码里把 `props.block` 收敛为 `ToolCallBlock` 并加注释，避免类型层面把 running 阶段当成 result。
+4. **安装可配置性**：`cordis.patch.yml` 原来只有 `[]`，`dsh plugin add` 装完没有任何入口。现在插入一行空配置；所有 Config 字段带默认值，`apply` 在 `serverName` 为空时打日志并返回（不炸启动）。用户按 id 覆盖填 `serverName` + `command`/`url`（profile 的 `cordis.patch.yml` 或 `--patch` 写 `- id: mcp-apps-host` + `config`）；插件没有自带 Settings 面板，`plugins.bundle.config` 是各插件自己注册的槽位。
+5. **版本**：`0.1.0-rc.2` → `0.2.0`，对齐 DSH 0.2.x 的适配基线。
+
+### 构建说明
+
+`lib/` 仍是提交进仓库的产物（安装路径不跑构建）。本次改动量很小，按源码同构方式同步修改了 `lib/index.js`；`lib/client.js` 只有类型层变化，产物无需改动。下次若改动客户端逻辑，仍建议回到 monorepo 里用官方 clientBundle 预设重建，不要长期依赖手工同步。

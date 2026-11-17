@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP Apps 宿主",
+    "description": "连接 MCP Apps 服务器，在对话中渲染它的交互式 HTML 卡片。"
+  }
+}

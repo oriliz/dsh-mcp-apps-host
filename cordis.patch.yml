@@ -1,6 +1,14 @@
-# MCP Apps Host bundle: makes the plugin loadable in a dsh profile.
-# No connection is inserted by default — declare yours explicitly via a
-# --patch overlay (see examples/ and the README Usage section), so two
-# inserts of the same serverName can't crash the boot with a duplicate
-# bridge route.
-[]
+# MCP Apps Host bundle: installable as-is.
+#
+# The inserted row starts unconfigured: `apply` logs that it is waiting and
+# does nothing until you fill in `serverName` plus `command` (stdio) or `url`
+# (streamable-http) in Settings → Plugins. That keeps `dsh plugin add` useful —
+# the plugin appears and is editable — without connecting anywhere by default.
+#
+# To run several MCP Apps servers, either edit this row's config or add more
+# rows in a `--patch` overlay (one plugin instance per server; `serverName`
+# also names the bridge route `/mcp-apps/<serverName>/bridge`). See
+# examples/connect-server.patch.yml.
+- insert:
+    - id: mcp-apps-host
+      name: '@deepseek-ai/dsh-mcp-apps-host'

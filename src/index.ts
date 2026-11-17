@@ -68,11 +68,15 @@ export type Config = StdioConfig | StreamableHttpConfig
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 
+// Every field carries a default so the bundle patch can insert this row with
+// an empty `config` (that is what makes `dsh plugin add` useful: the plugin
+// shows up in Settings with an editable form). An unconfigured instance
+// no-ops in `apply` instead of failing activation.
 export const Config = zz.union([
   zz.object({
-    transport: zz.const('stdio'),
-    serverName: zz.string().required().pattern(SERVER_NAME_PATTERN),
-    command: zz.string().required(),
+    transport: zz.const('stdio').default('stdio'),
+    serverName: zz.string().default(''),
+    command: zz.string().default(''),
     args: zz.array(String).default([]),
     env: zz.dict(String).default({}),
     cwd: zz.string().default(''),
@@ -80,8 +84,8 @@ export const Config = zz.union([
   }),
   zz.object({
     transport: zz.const('streamable-http'),
-    serverName: zz.string().required().pattern(SERVER_NAME_PATTERN),
-    url: zz.string().required(),
+    serverName: zz.string().default(''),
+    url: zz.string().default(''),
     headers: zz.dict(String).default({}),
     toolCallTimeoutMs: zz.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
   }),
@@ -577,12 +581,46 @@ function createBridgeHandler(conn: AppsConnection, ctx: Context) {
  * Connect one MCP Apps server, register its tools with `_meta` preservation,
  * and expose the HTTP bridge endpoint for iframe postMessage proxying.
  */
-export async function apply(ctx: Context, config: Config): Promise<void> {
-  const { client, registeredToolNames } = await connectAndRegister(ctx, config)
+export async function apply(ctx: Context, config?: Config): Promise<void> {
+  // The installed bundle inserts this row with no config at all, which the
+  // Loader passes through as undefined instead of validating a defaulted
+  // object. Normalize here so the schema defaults and this guard both hold.
+  const settings = {
+    transport: 'stdio',
+    serverName: '',
+    command: '',
+    args: [],
+    env: {},
+    cwd: '',
+    url: '',
+    headers: {},
+    toolCallTimeoutMs: DEFAULT_TOOL_CALL_TIMEOUT_MS,
+    ...config,
+  } as unknown as Config
+  // The installed bundle inserts this row with no config, so the plugin is
+  // visible and configurable in Settings before it points at any server.
+  // Stay dormant (and explain why) instead of failing activation.
+  if (settings.serverName === '') {
+    ctx.logger.info('mcp-apps-host: not configured — set `serverName` and `command` (stdio) or `url` (streamable-http) in Settings → Plugins, then restart this plugin')
+    return
+  }
+  if (!SERVER_NAME_PATTERN.test(settings.serverName)) {
+    throw new Error(`mcp-apps-host: serverName "${settings.serverName}" must match ${String(SERVER_NAME_PATTERN)}`)
+  }
+  if (settings.transport === 'stdio' && settings.command === '') {
+    ctx.logger.warn(`mcp-apps-host(${settings.serverName}): transport is stdio but the command field is empty — set it in Settings → Plugins`)
+    return
+  }
+  if (settings.transport === 'streamable-http' && settings.url === '') {
+    ctx.logger.warn(`mcp-apps-host(${settings.serverName}): transport is streamable-http but the url field is empty — set it in Settings → Plugins`)
+    return
+  }
+
+  const { client, registeredToolNames } = await connectAndRegister(ctx, settings)
 
   const conn: AppsConnection = {
     client,
-    serverName: config.serverName,
+    serverName: settings.serverName,
     registeredToolNames,
     toolCallTimeoutMs: config.toolCallTimeoutMs,
   }
@@ -590,7 +628,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Per-instance bridge route: /mcp-apps/<serverName>/bridge
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
-    path: `/mcp-apps/${config.serverName}`,
+    path: `/mcp-apps/${settings.serverName}`,
     handler: createBridgeHandler(conn, ctx),
   }), 'mcp-apps-host: HTTP bridge')
 

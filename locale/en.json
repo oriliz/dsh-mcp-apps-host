@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP Apps Host",
+    "description": "Connects an MCP Apps server and renders its interactive HTML cards inside the conversation."
+  }
+}

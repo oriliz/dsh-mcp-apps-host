@@ -245,7 +245,13 @@ function PlainToolRow({ toolName, block }: { toolName: string; block: ToolCallBl
  * - `ui/message` — sends a user message into the DSH conversation (debounced)
  */
 export function McpAppCard(props: ToolCallViewProps): JSX.Element {
-  const { block, callId, sessionId, toolName } = props
+  const { callId, sessionId, toolName } = props
+  // DSH 0.2.x makes ToolCallViewProps a preparing/start/result union. The keyed
+  // slot only claims a tool after a settled result carried a card payload, so
+  // this view mounts at `result`; a later running call for the same tool still
+  // reaches the component, and the `kind` guards below render the plain row for
+  // it without touching settled-only fields.
+  const block = props.block as ToolCallBlock
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   // Keep the latest block in a ref so the postMessage handler always sees it.
   const blockRef = useRef(block)
